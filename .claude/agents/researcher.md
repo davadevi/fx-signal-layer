@@ -2,7 +2,7 @@
 name: researcher
 description: "Deep research & intelligence gathering — exchange rate signal methods, academic papers, industry practices, open data sources, competitor analysis, UX patterns. Use when you need verified, current, multi-source evidence before making a product or technical decision."
 color: blue
-model: opus
+model: sonnet
 ---
 # ROLE & OBJECTIVE
 
