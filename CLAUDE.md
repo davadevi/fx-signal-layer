@@ -118,3 +118,51 @@ docs/api/          # module interface specs
 - No notebooks in production pipeline — extract to `src/` first
 - Type hints required on all public functions
 - `make test` must pass before every PR
+
+## AI Tools
+
+### graphify
+Запускать после того как `src/` наберёт 10+ файлов.
+```
+/graphify src/          # построить граф кодовой базы
+/graphify docs/         # граф решений и интерфейсов
+graphify query "где используется cutoff_date"
+graphify path "BaseIndicator" "BacktestResult"
+graphify explain "walk-forward"
+```
+Граф живёт в `graphify-out/`. После правок кода: `graphify update .`
+
+### cavecrew agents
+Три специализированных агента — вызывать через Agent tool:
+
+| Агент | Когда |
+|-------|-------|
+| `caveman:cavecrew-investigator` | "где определён X", "что вызывает Y" — read-only |
+| `caveman:cavecrew-builder` | хирургическая правка 1–2 файлов |
+| `caveman:cavecrew-reviewer` | review PR перед merge, одна строка на проблему |
+
+**Обязательно:** каждый PR прогнать через `cavecrew-reviewer` до merge.  
+Главное что ловить: lookahead, неверный baseline, нарушение контрактов модулей.
+
+### /review (caveman-review)
+Перед merge в `develop` — запустить `/review` на diff.  
+Ловит: lookahead паттерны, нарушения no-lookahead правила, dead code.
+
+### Iteration log
+Каждый эксперимент с индикатором = запись в `docs/iterations/*/log.md`.  
+Формат — см. заголовок log.md файла.  
+Отрицательный результат логировать так же как положительный.
+
+### Bug review log
+Читать `docs/dev/bug-review-log.md` перед любой фичей или фиксом.  
+Писать туда после каждого найденного бага.
+
+## Documentation
+| Файл | Содержание |
+|------|-----------|
+| `docs/api/interfaces.md` | Контракты всех модулей (SSOT) |
+| `docs/decisions/ADR-001` | Выбор источника данных |
+| `docs/decisions/ADR-002` | Q&A с заказчиком — сессия 1 |
+| `docs/decisions/ADR-003` | Q&A с заказчиком — сессия 2 + таблица допущений |
+| `docs/iterations/` | Iteration logs по каждому блоку |
+| `docs/dev/bug-review-log.md` | Лог багов — читать перед фичей |
