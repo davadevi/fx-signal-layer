@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Data — raw data tracked separately (git-lfs or excluded)
+data/raw/
+data/processed/
+
+# Reports — large files
+reports/*.html
+
+# Notebooks output (nbstripout handles .ipynb, but checkpoints)
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Env
+.env
+.venv/
+venv/
