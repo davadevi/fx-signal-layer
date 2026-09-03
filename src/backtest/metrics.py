@@ -137,6 +137,119 @@ def cost_of_waiting_bps(
     return float(np.mean(diffs))
 
 
+def hit_rate_at_h_below_avg(
+    signals: list[date],
+    rates: pd.Series,
+    h: int,
+) -> float:
+    """Hit rate using definition B: rate[t] < mean(rate[t+1..t+h]).
+
+    Theoretically sounder for 'was this a good day to transfer':
+    client got a rate below the average of the next h days.
+    Can only be computed in backtest (requires future data).
+    """
+    if not signals or rates.empty:
+        return float("nan")
+    hits = 0
+    eligible = 0
+    max_date = rates.index.max()
+    for d in signals:
+        t = _to_timestamp(d)
+        if t not in rates.index:
+            continue
+        if t + pd.Timedelta(days=h) > max_date:
+            continue
+        future_rates: list[float] = []
+        for i in range(1, h + 1):
+            fd = t + pd.Timedelta(days=i)
+            if fd in rates.index:
+                v = rates.loc[fd]
+                if not pd.isna(v):
+                    future_rates.append(float(v))
+        if len(future_rates) < max(1, h // 2):
+            continue
+        eligible += 1
+        if rates.loc[t] < np.mean(future_rates):
+            hits += 1
+    if eligible == 0:
+        return float("nan")
+    return hits / eligible
+
+
+def base_rate_at_h_below_avg(
+    trading_days: pd.DatetimeIndex,
+    rates: pd.Series,
+    h: int,
+) -> float:
+    """Base rate for definition B on random trading days."""
+    days = [pd.Timestamp(d) for d in trading_days]
+    return hit_rate_at_h_below_avg(days, rates, h)
+
+
+def lift_over_random_b(
+    signals: list[date],
+    rates: pd.Series,
+    trading_days: pd.DatetimeIndex,
+    h: int,
+) -> float:
+    """Lift using hit definition B (below-average future deal)."""
+    base = base_rate_at_h_below_avg(trading_days, rates, h)
+    hit = hit_rate_at_h_below_avg(signals, rates, h)
+    if not base or np.isnan(base) or np.isnan(hit):
+        return float("nan")
+    return hit / base
+
+
+def lift_confidence_interval(
+    signals: list[date],
+    rates: pd.Series,
+    trading_days: pd.DatetimeIndex,
+    h: int,
+    n_resamples: int = 2000,
+    confidence_level: float = 0.95,
+    definition: str = "A",
+) -> tuple[float, float]:
+    """Bootstrap CI for lift. Returns (ci_low, ci_high).
+
+    definition="A": hit_rate_at_h (rate[t+h] >= rate[t])
+    definition="B": hit_rate_at_h_below_avg (rate[t] < mean future)
+    """
+    from numpy.random import default_rng
+
+    rng = default_rng(42)
+
+    if definition == "A":
+        hit_fn = hit_rate_at_h
+        base_fn = base_rate_at_h
+    else:
+        hit_fn = hit_rate_at_h_below_avg
+        base_fn = base_rate_at_h_below_avg
+
+    base = base_fn(trading_days, rates, h)
+    if not base or np.isnan(base):
+        return float("nan"), float("nan")
+
+    sig_arr = np.array(signals)
+    if len(sig_arr) < 5:
+        return float("nan"), float("nan")
+
+    boot_lifts: list[float] = []
+    for _ in range(n_resamples):
+        sample = list(rng.choice(sig_arr, size=len(sig_arr), replace=True))
+        hr = hit_fn(sample, rates, h)
+        if not np.isnan(hr):
+            boot_lifts.append(hr / base)
+
+    if not boot_lifts:
+        return float("nan"), float("nan")
+
+    alpha = 1 - confidence_level
+    return (
+        float(np.quantile(boot_lifts, alpha / 2)),
+        float(np.quantile(boot_lifts, 1 - alpha / 2)),
+    )
+
+
 def apply_cooldown(signal_days: list[date], cooldown_days: int = 3) -> list[date]:
     """Enforce a minimum gap between consecutive signals. Keeps the earliest."""
     if not signal_days:

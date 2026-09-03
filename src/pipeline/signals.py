@@ -6,7 +6,12 @@ from datetime import date
 
 import pandas as pd
 
-from src.indicators import PercentileRankIndicator, RSIFilter, VolatilityRegimeFilter
+from src.indicators import (
+    LogReturnPercentileIndicator,
+    PercentileRankIndicator,
+    RSIFilter,
+    VolatilityRegimeFilter,
+)
 from src.texts.templates import format_push_text
 
 MAIN_CORRIDORS = ["RUB_TJS", "RUB_UZS", "RUB_KGS", "RUB_AMD", "RUB_KZT"]
@@ -55,19 +60,30 @@ def generate_signals(
     corridor_list = corridors or MAIN_CORRIDORS
     key = pd.Timestamp(cutoff_date)
 
+    # Primary signal: log-return percentile (I(0) transform, valid on trending series).
+    # Secondary: absolute-level percentile — kept for reporting only.
+    primary_ind = LogReturnPercentileIndicator(
+        return_window=5, rank_window=60, threshold=0.20, confirm_days=2
+    )
     pct_ind = PercentileRankIndicator()
     rsi_ind = RSIFilter()
     regime_ind = VolatilityRegimeFilter()
 
     candidates: list[Signal] = []
     for corridor in corridor_list:
+        primary_scores = primary_ind.compute(df, corridor, cutoff_date)
         pct_scores = pct_ind.compute(df, corridor, cutoff_date)
         regime_scores = regime_ind.compute(df, corridor, cutoff_date)
         rsi_scores = rsi_ind.compute(df, corridor, cutoff_date)
 
-        if key not in pct_scores.index or pd.isna(pct_scores.loc[key]):
+        if key not in primary_scores.index or pd.isna(primary_scores.loc[key]):
             continue
-        pct_val = float(pct_scores.loc[key])
+        primary_val = float(primary_scores.loc[key])
+        pct_val = (
+            float(pct_scores.loc[key])
+            if key in pct_scores.index and not pd.isna(pct_scores.loc[key])
+            else float("nan")
+        )
         regime_val = float(regime_scores.loc[key]) if key in regime_scores.index else 1.0
         regime_str = "calm" if regime_val >= 0.5 else "crisis"
         rsi_val = (
@@ -78,7 +94,7 @@ def generate_signals(
 
         if regime_str == "crisis":
             continue
-        if pct_val >= pct_ind.threshold:
+        if primary_val >= primary_ind.threshold:
             continue
         if require_rsi and (rsi_val is None or rsi_val > rsi_ind.threshold / 100.0):
             continue
@@ -87,14 +103,14 @@ def generate_signals(
         if rate is None:
             continue
 
-        push = format_push_text(corridor, pct_val, rate, "favorable_now")
+        push = format_push_text(corridor, primary_val, rate, "favorable_now")
         candidates.append(
             Signal(
                 date=cutoff_date,
                 corridor=corridor,
-                indicator=pct_ind.name,
+                indicator=primary_ind.name,
                 direction="favorable_now",
-                strength=1.0 - pct_val,
+                strength=1.0 - primary_val,
                 push_text=push,
                 percentile_rank=pct_val,
                 rsi_score=rsi_val,

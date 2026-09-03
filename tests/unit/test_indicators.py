@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from src.indicators import (
+    LogReturnPercentileIndicator,
     MomentumIndicator,
     PercentileRankIndicator,
     RSIFilter,
@@ -38,7 +39,13 @@ def make_test_df(
 
 @pytest.mark.parametrize(
     "ind_cls",
-    [PercentileRankIndicator, RSIFilter, VolatilityRegimeFilter, MomentumIndicator],
+    [
+        PercentileRankIndicator,
+        RSIFilter,
+        VolatilityRegimeFilter,
+        MomentumIndicator,
+        LogReturnPercentileIndicator,
+    ],
 )
 def test_no_lookahead(ind_cls):
     df = make_test_df(300)
@@ -105,6 +112,47 @@ def test_rsi_fires_on_downtrend():
     ind = RSIFilter(period=14, threshold=35.0)
     cutoff = date(2022, 9, 1)
     assert ind.get_signal(df, "RUB_TJS", cutoff) is True
+
+
+class TestLogReturnPercentileIndicator:
+    def test_no_lookahead(self):
+        df = make_test_df(300)
+        cutoff = date(2022, 8, 1)
+        ind = LogReturnPercentileIndicator()
+        scores = ind.compute(df, "RUB_TJS", cutoff)
+        key = pd.Timestamp(cutoff)
+        assert (scores.index <= key).all()
+
+    def test_scores_in_range(self):
+        rng = np.random.default_rng(0)
+        rates = 100 + rng.normal(0, 0.3, size=250).cumsum()
+        df = make_test_df(250, rates=rates)
+        ind = LogReturnPercentileIndicator()
+        scores = ind.compute(df, "RUB_TJS", date(2022, 11, 1)).dropna()
+        assert ((scores >= 0) & (scores <= 1)).all()
+
+    def test_fires_on_sharp_downmove(self):
+        # Flat/noisy rate then a sharp drop → recent log-return is in bottom percentile.
+        rng = np.random.default_rng(1)
+        base = 100 + rng.normal(0, 0.05, size=200).cumsum()
+        drop = np.linspace(base[-1], base[-1] * 0.90, 20)
+        rates = np.concatenate([base, drop])
+        df = make_test_df(len(rates), rates=rates)
+        ind = LogReturnPercentileIndicator(
+            return_window=5, rank_window=60, threshold=0.20, confirm_days=0
+        )
+        cutoff = df["date"].iloc[-1].date()
+        assert ind.get_signal(df, "RUB_TJS", cutoff) is True
+
+    def test_confirm_days_suppresses_still_falling(self):
+        # Monotone fall → confirm_days=2 requires two rising days, so no signal.
+        rates = np.linspace(100.0, 60.0, 250)
+        df = make_test_df(250, rates=rates)
+        ind = LogReturnPercentileIndicator(
+            return_window=5, rank_window=60, threshold=0.50, confirm_days=2
+        )
+        cutoff = date(2022, 11, 1)
+        assert ind.get_signal(df, "RUB_TJS", cutoff) is False
 
 
 def test_regime_detects_crisis():

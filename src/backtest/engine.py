@@ -18,10 +18,14 @@ from dateutil.relativedelta import relativedelta
 from src.backtest.metrics import (
     apply_cooldown,
     base_rate_at_h,
+    base_rate_at_h_below_avg,
     clustering_score,
     cost_of_waiting_bps,
     hit_rate_at_h,
+    hit_rate_at_h_below_avg,
+    lift_confidence_interval,
     lift_over_random,
+    lift_over_random_b,
 )
 from src.indicators.base import BaseIndicator
 
@@ -34,29 +38,44 @@ OOT_START = date(2024, 1, 1)
 class BacktestResult:
     indicator: str
     corridor: str
-    hit_rate: dict[int, float]
-    lift: dict[int, float]
+    hit_rate: dict[int, float]           # definition A: rate[t+h] >= rate[t]
+    lift: dict[int, float]               # definition A lift
+    hit_rate_b: dict[int, float]         # definition B: rate[t] < mean future
+    lift_b: dict[int, float]             # definition B lift
+    lift_ci_low: dict[int, float]        # 95% CI lower (definition A)
+    lift_ci_high: dict[int, float]       # 95% CI upper (definition A)
     out_of_time_lift: dict[int, float]
+    out_of_time_lift_b: dict[int, float]
     signal_count: int
     signals_per_week: float
     clustering_score: float
     cost_of_waiting_bps: float
     n_test_windows: int
     base_rate: dict[int, float]
+    base_rate_b: dict[int, float]
 
     def to_json(self) -> dict:
+        def _d(x: dict[int, float]) -> dict[str, float]:
+            return {str(k): v for k, v in x.items()}
+
         return {
             "indicator": self.indicator,
             "corridor": self.corridor,
-            "hit_rate": {str(k): v for k, v in self.hit_rate.items()},
-            "lift": {str(k): v for k, v in self.lift.items()},
-            "out_of_time_lift": {str(k): v for k, v in self.out_of_time_lift.items()},
+            "hit_rate": _d(self.hit_rate),
+            "lift": _d(self.lift),
+            "hit_rate_b": _d(self.hit_rate_b),
+            "lift_b": _d(self.lift_b),
+            "lift_ci_low": _d(self.lift_ci_low),
+            "lift_ci_high": _d(self.lift_ci_high),
+            "out_of_time_lift": _d(self.out_of_time_lift),
+            "out_of_time_lift_b": _d(self.out_of_time_lift_b),
             "signal_count": self.signal_count,
             "signals_per_week": self.signals_per_week,
             "clustering_score": self.clustering_score,
             "cost_of_waiting_bps": self.cost_of_waiting_bps,
             "n_test_windows": self.n_test_windows,
-            "base_rate": {str(k): v for k, v in self.base_rate.items()},
+            "base_rate": _d(self.base_rate),
+            "base_rate_b": _d(self.base_rate_b),
         }
 
 
@@ -68,7 +87,7 @@ def _signal_direction(indicator: BaseIndicator) -> str:
     Default: "below" for the indicators we ship.
     """
     name = getattr(indicator, "name", "")
-    if name in {"percentile_rank", "rsi_filter", "momentum"}:
+    if name in {"percentile_rank", "rsi_filter", "momentum", "log_return_percentile"}:
         return "below"
     return "above"
 
@@ -94,6 +113,8 @@ def run_walkforward(
     embargo_days: int = 5,
     save_report: bool = True,
     reports_dir: str = "reports",
+    compute_ci: bool = True,
+    ci_horizons: list[int] | None = None,
 ) -> BacktestResult:
     horizons = list(h_horizons) if h_horizons else list(H_HORIZONS)
 
@@ -163,6 +184,29 @@ def run_walkforward(
     lift = {h: lift_over_random(all_signals, rates_full, trading_idx, h) for h in horizons}
     oot_lift = {h: lift_over_random(oot_signals, rates_full, oot_idx, h) for h in horizons}
 
+    hit_rate_b = {h: hit_rate_at_h_below_avg(all_signals, rates_full, h) for h in horizons}
+    base_rate_b = {h: base_rate_at_h_below_avg(trading_idx, rates_full, h) for h in horizons}
+    lift_b = {h: lift_over_random_b(all_signals, rates_full, trading_idx, h) for h in horizons}
+    oot_lift_b = {h: lift_over_random_b(oot_signals, rates_full, oot_idx, h) for h in horizons}
+
+    ci_hs = ci_horizons if ci_horizons is not None else [5]
+    lift_ci_low: dict[int, float] = {}
+    lift_ci_high: dict[int, float] = {}
+    if compute_ci and all_signals:
+        for h in horizons:
+            if h in ci_hs:
+                lo, hi = lift_confidence_interval(
+                    all_signals, rates_full, trading_idx, h, definition="A"
+                )
+                lift_ci_low[h] = lo
+                lift_ci_high[h] = hi
+            else:
+                lift_ci_low[h] = float("nan")
+                lift_ci_high[h] = float("nan")
+    else:
+        lift_ci_low = {h: float("nan") for h in horizons}
+        lift_ci_high = {h: float("nan") for h in horizons}
+
     # signals per week: over the total test period
     if all_trading_days:
         span_days = (max(all_trading_days) - min(all_trading_days)).days + 1
@@ -176,13 +220,19 @@ def run_walkforward(
         corridor=corridor,
         hit_rate=hit_rate,
         lift=lift,
+        hit_rate_b=hit_rate_b,
+        lift_b=lift_b,
+        lift_ci_low=lift_ci_low,
+        lift_ci_high=lift_ci_high,
         out_of_time_lift=oot_lift,
+        out_of_time_lift_b=oot_lift_b,
         signal_count=len(all_signals),
         signals_per_week=signals_per_week,
         clustering_score=clustering_score(all_signals),
         cost_of_waiting_bps=cost_of_waiting_bps(all_signals, rates_full),
         n_test_windows=n_windows,
         base_rate=base_rate,
+        base_rate_b=base_rate_b,
     )
 
     if save_report:

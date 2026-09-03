@@ -1,6 +1,24 @@
 # Log: Backtest Engine
 <!-- Newest first. -->
 
+## 2026-09-03 — Hit definition B, bootstrap CI, log-return indicator comparison
+
+Extended `src/backtest/metrics.py`:
+- `hit_rate_at_h_below_avg` / `base_rate_at_h_below_avg` / `lift_over_random_b` — hit definition B: `rate[t] < mean(rate[t+1..t+h])`. Theoretically sounder ("client got a below-average deal for the next h days") but only usable in backtest. Requires at least `h/2` future observations to count as eligible.
+- `lift_confidence_interval` — bootstrap 95% CI over resampled signal lists (2000 resamples, seeded).
+
+Extended `BacktestResult` with `hit_rate_b`, `lift_b`, `lift_ci_low/high`, `out_of_time_lift_b`, `base_rate_b`. `run_walkforward(compute_ci=True, ci_horizons=[5])` — CI only for the h=5 horizon by default to keep bootstrap cost bounded.
+
+Comparison run (`scripts/compare_indicators.py`, output in `reports/indicator_comparison.txt`):
+
+| Indicator                | corridor | lift_A@5 | lift_B@5 | CI_low | CI_high | sig/wk |
+|--------------------------|----------|---------:|---------:|-------:|--------:|-------:|
+| percentile_30d (baseline)| avg      |    0.927 |    0.882 |      — |       — |   0.69 |
+| log_ret_5d_60w           | avg      |    1.044 |    0.930 |      — |       — |   0.50 |
+| log_ret_5d_60w_confirm2  | avg      |    1.343 |    1.358 |      — |       — |   0.10 |
+
+Per-corridor detail in `docs/iterations/02-indicators/log.md`. Definition A and definition B lifts move together — no metric-choice artifact. CIs strictly above 1.0 on RUB_TJS and RUB_KGS with `confirm2` variant.
+
 ## 2026-09-03 — Walk-forward engine + metrics implemented
 
 `src/backtest/metrics.py`:
