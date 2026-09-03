@@ -131,15 +131,19 @@ def _pick_two_thresholds(
     mandatory_rate: float,
     optional_rate: float,
 ) -> tuple[float, float]:
-    """Returns (threshold_mandatory, threshold_optional) from training probs."""
+    """Returns (threshold_mandatory, threshold_optional) from training probs.
+
+    Guarantees t_optional < t_mandatory so the two zones don't overlap.
+    """
     if len(train_probs) == 0:
-        return 0.5, 0.5
+        return 0.5, 0.4
     q_mandatory = 1 - mandatory_rate
     q_optional = 1 - optional_rate
-    return (
-        float(np.quantile(train_probs, q_mandatory)),
-        float(np.quantile(train_probs, q_optional)),
-    )
+    t_mand = float(np.quantile(train_probs, q_mandatory))
+    t_opt = float(np.quantile(train_probs, q_optional))
+    if t_opt >= t_mand:
+        t_opt = t_mand * 0.95  # ensure strict ordering
+    return t_mand, t_opt
 
 
 def run_ml_walkforward(
@@ -265,9 +269,6 @@ def run_ml_walkforward(
         for d in sorted(raw_optional):
             all_prior = prior_dates + fold_optional
             if all_prior:
-                # keep only most recent prior date (list is sorted)
-                gap = (d - all_prior[-1]).days if all_prior[-1] <= d else cooldown_days
-                # check against every prior — signals could be out of order across folds
                 too_close = any(abs((d - p).days) < cooldown_days for p in all_prior)
                 if too_close:
                     continue
