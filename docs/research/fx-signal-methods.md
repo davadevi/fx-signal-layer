@@ -1,456 +1,390 @@
-# FX Signal Layer — Research Brief
-**Project:** Alfa-Bank Hackathon — Exchange Rate Signal Layer  
-**Question:** How have similar problems been solved — detecting statistically favorable moments in FX time series to trigger user notifications?  
-**Decision:** Technical roadmap for signal layer before implementation begins  
-**Conducted:** September 2026  
-**Confidence scale:** High = ≥2 independent primary sources; Med = 1 primary + secondary evidence; Low = single source or indirect evidence
+# Ресёрч: Методы детектирования выгодного момента в FX для пуш-уведомлений
+
+**Проект:** Альфа-Банк Хакатон — Сигнальный слой курсов валют  
+**Вопрос:** Как аналогичные задачи решались ранее — детектирование статистически выгодных моментов в временных рядах валютных курсов для триггерных уведомлений?  
+**Решение информирует:** Технический роадмап сигнального слоя до начала реализации  
+**Проведён:** Сентябрь 2026  
+**Шкала уверенности:** Высокая = ≥2 независимых первичных источника; Средняя = 1 первичный + косвенные; Низкая = один источник или косвенные данные
 
 ---
 
-## Executive Summary
+## Резюме
 
-No prior system solves exactly this problem — proactive, ML-triggered favorable-moment detection on CBR daily RUB/CIS rates for retail remittance notifications. However, the academic and production landscape provides a clear convergent answer:
+Ни одна существующая система не решает задачу в точности так — проактивное ML-детектирование выгодного момента на дневных курсах ЦБ РФ RUB/СНГ для уведомлений розничных клиентов. Однако академическая литература и продуктовый ландшафт дают чёткий сходящийся ответ:
 
-**The winning pattern is: rolling-percentile/z-score mean-reversion signal + regime filter + walk-forward validated LightGBM with SHAP explainability.** Mean reversion dominates over momentum at the daily horizon for emerging-market FX. Regime detection (Hidden Markov Model or Bai-Perron) is essential to handle the 2022 structural break and prevent false signals in trending regimes. All production fintech systems use simple threshold alerts; no competitor has deployed ML-triggered proactive alerts on CIS corridors — this is a genuine differentiation opportunity.
+**Выигрышный паттерн: скользящий перцентильный/z-score сигнал возврата к среднему + фильтр режима рынка + LightGBM с валидацией walk-forward и интерпретируемостью через SHAP.** Возврат к среднему доминирует над моментумом на дневном горизонте для валют развивающихся рынков. Детектирование режима (HMM или Bai-Perron) критично для обработки структурного перелома 2022 года и предотвращения ложных сигналов в трендовых режимах. Все продуктовые fintech-системы используют простые пороговые алерты; ни один конкурент не развернул ML-triggered проактивные уведомления по коридорам СНГ — это реальная возможность для дифференциации.
 
-**Minimum viable signal stack (high confidence):**
-1. 30-day rolling percentile rank of today's rate — flags when rate is in bottom quintile of recent distribution
-2. RSI(14) < 35 — short-term oversold confirmation
-3. Regime filter — suppress signals during Crisis/Trending regime (use HMM or simple rolling-volatility percentile)
-4. LightGBM classifier trained walk-forward with SHAP for explainability — adds 3–8 percentage points over rule-only baseline
-5. Frequency cap — max 1–2 per corridor per week
+**Минимальный рабочий стек сигналов (высокая уверенность):**
+1. 30-дневный перцентильный ранг текущего курса — флаг когда курс в нижнем квинтиле недавнего распределения
+2. RSI(14) < 35 — подтверждение краткосрочной перепроданности
+3. Фильтр режима — подавление сигналов в кризисном/трендовом режиме (HMM или простой перцентиль скользящей волатильности)
+4. Классификатор LightGBM, обученный walk-forward с SHAP для интерпретируемости — даёт +3–8 п.п. над rule-based baseline
+5. Частотный cap — максимум 1–2 на коридор в неделю
 
-Target lift ≥1.3 is achievable: comparable academic setups report 55–61% directional accuracy (baseline 50%), and Bollinger-Band mean-reversion signals show 57%+ success rates on volatility-filtered portfolios.
-
----
-
-## Section 1: Academic Literature on Favorable Moment Detection
-
-### 1.1 Binary Signal Classification on FX Time Series
-
-**Finding:** The most extensively validated ML approach for daily FX direction classification is gradient boosting (XGBoost / LightGBM) combined with technical indicators, with walk-forward out-of-sample accuracy of 53–58% on major pairs.  
-**Source:** arXiv 2409.04471 — "Predicting Foreign Exchange EUR/USD direction using machine learning" (2024)  
-**Source:** MQL5 / quantitative practitioner community walk-forward results (2022–2024), combined OOS precision 53.64%, recall 60.05%, F1 56.67% on daily data  
-**Confidence:** High  
-**Applicability:** Directly applicable. The 53–58% accuracy on major pairs likely understates what is achievable on CIS pairs during "normal" (non-crisis) regimes due to higher mean reversion tendency. Baseline is 50%, so a 6–8pp lift translates to lift ratio ~1.12–1.16 on direction; combined with the asymmetry that "favorable" is only one direction (rate low = good for sender), precision on the positive class can exceed accuracy.
-
-**Finding:** Feature selection and stacking (combining multiple model predictions into a meta-learner) significantly improve forex prediction performance; tree-based feature importance + neural network stacking is a validated pattern.  
-**Source:** arXiv 2107.14092 — "Feature importance recap and stacking models for forex price prediction"  
-**Confidence:** Med (abstract-level extraction only; full paper behind paywall)  
-**Applicability:** The stacking approach adds complexity; not recommended for v1 given explainability constraints.
-
-**Finding:** EUR/USD directional classification with PCA-decorrelated features and meta-estimators achieved 58.52% accuracy and 32.48% annual return on 2022 out-of-sample data.  
-**Source:** arXiv 2409.04471  
-**Confidence:** High  
-**Applicability:** 2022 was the geopolitical shock year; the fact that models achieved above-baseline accuracy even in that turbulent year is encouraging.
-
-### 1.2 Local Minima / Favorable Entry Point Detection Specifically
-
-**Finding:** A supervised ML framework for predicting market troughs (local minima) exists in academic literature. The approach uses volatility measures, liquidity indicators, price-based signals, and market microstructure variables, evaluated with precision/recall/F1, with SHAP + causal sensitivity analysis for interpretation.  
-**Source:** arXiv 2509.05922 — "Predicting Market Troughs: A Machine Learning Approach with Causal Interpretation" (2025)  
-**Confidence:** Med (PDF extraction from abstract-level; full methodology not fully retrievable)  
-**Applicability:** High — this is the closest academic parallel to the exact use case. The framework directly maps: replace equity microstructure features with FX volatility, carry-trade proxies, and rolling-percentile features. The causal interpretation via SHAP satisfies the explainability constraint.
-
-**Finding:** No academic paper was found that addresses "optimal time for retail remittance transfer" as a signal detection problem on CIS/RUB pairs specifically. This is an open niche.  
-**Confidence:** High (exhaustive search)  
-**Applicability:** Confirms originality of the project; no directly applicable prior art in open literature.
-
-### 1.3 Percentile-Based Signals
-
-**Finding:** Rolling 20-day volatility percentile is empirically documented for EUR/USD regime segmentation (Low <10th pct, Normal 10–90th, High >90th percentile). Percentile-rank signals are model-agnostic and distribution-free — an advantage over z-score for non-normal CIS currency distributions.  
-**Source:** Search synthesis from quantitative FX practitioners and academic literature  
-**Source:** Neomy fintech product (production) — uses 30-day rolling average comparison as threshold for "Top," "Mid," "No Go" alerts (see Section 5)  
-**Confidence:** High  
-**Applicability:** Directly applicable. Recommended as the primary signal feature. For CIS currencies with fat-tailed distributions, percentile rank is preferable to z-score.
+Целевой lift ≥1.3 достижим: сопоставимые академические результаты — 55–61% точности направления (baseline 50%), сигналы Bollinger Band mean-reversion — 57%+ успеха на волатильно-фильтрованных портфелях.
 
 ---
 
-## Section 2: Rule-Based Technical Indicators — Empirical Performance
+## Раздел 1: Академическая литература по детектированию выгодного момента
 
-### 2.1 RSI on Daily FX Data
+### 1.1 Бинарная классификация сигналов на временных рядах FX
 
-**Finding:** RSI mean-reversion strategies on daily FX data show win rates of 55–70% depending on the pair and holding period, but statistical significance is pair-specific. One academic study found USD/ILS showed significant RSI(50) for 3–7 day holding periods, while other emerging market currencies did not show significance for short holding periods.  
-**Source:** Tandfonline 2024 study — "The predictability of technical analysis in foreign exchange market using forward return: evidence from developed and emerging currencies"  
-**Confidence:** Med (403 error on full paper; abstract and search synthesis)  
-**Applicability:** RSI works, but has diminishing returns on its own. Best used as a confirming filter rather than primary signal. The mixed evidence on emerging market RSI significance is a caution — CIS pairs may require calibration.
+**Находка:** Наиболее широко валидированный ML-подход для классификации направления дневных FX — градиентный бустинг (XGBoost / LightGBM) с техническими индикаторами; out-of-sample точность 53–58% на основных парах при walk-forward валидации.  
+**Источник:** arXiv 2409.04471 — "Predicting Foreign Exchange EUR/USD direction using machine learning" (2024)  
+**Источник:** Совокупные OOS результаты walk-forward от практиков (2022–2024): precision 53.64%, recall 60.05%, F1 56.67% на дневных данных  
+**Уверенность:** Высокая  
+**Применимость:** Прямая. Точность 53–58% на основных парах, вероятно, занижает достижимое на парах СНГ в «нормальных» (некризисных) режимах из-за более высокой склонности к возврату к среднему. Baseline — 50%, 6–8 п.п. lift по направлению дают коэффициент ~1.12–1.16; точность по положительному классу может превысить общую точность, поскольку «выгодно» — только одно направление.
 
-**Finding:** For daily currency pairs, mean reversion is statistically more significant than momentum (t-stat for reversal factor: −4.074, p-value near zero; t-stat for momentum factor: 1.417, not significant) at the 1-month horizon.  
-**Source:** QuantConnect research — "Combining Mean Reversion and Momentum in Forex Market"  
-**Confidence:** High  
-**Applicability:** Critical finding. **Mean reversion is the correct signal family for this use case** at daily/weekly horizons. Momentum continuation is for multi-month horizons. This directly supports using percentile channels and RSI oversold as the primary signal family.
+**Находка:** Отбор признаков и стэкинг (объединение предсказаний нескольких моделей в мета-обучающийся) значительно улучшают качество предсказания FX; паттерн «tree-based feature importance + нейросеть для стэкинга» валидирован.  
+**Источник:** arXiv 2107.14092 — "Feature importance recap and stacking models for forex price prediction"  
+**Уверенность:** Средняя (извлечено из абстракта; полная статья за paywall)  
+**Применимость:** Стэкинг добавляет сложность; не рекомендован в v1 с учётом требования интерпретируемости.
 
-**Finding:** RSI oversold conditions (RSI < 30) preceded reversals in documented backtests with 60–79% frequency when combined with price structure confirmation, but many published "91% win rate" claims are data-mined and should be treated with extreme skepticism.  
-**Source:** QuantifiedStrategies.com RSI backtest documentation; multiple trading strategy sites  
-**Confidence:** Low-Med for the higher figures (likely overfit or equity-specific); Med for the 60% range on FX with confirmation  
-**Applicability:** Use RSI < 35 as a confirming filter, not as a standalone signal. Target 55–60% precision on the favorable-day class.
+**Находка:** Классификация направления EUR/USD с PCA-декоррелированными признаками и мета-оценщиками достигла 58.52% точности и 32.48% годового дохода на OOS данных 2022.  
+**Источник:** arXiv 2409.04471  
+**Уверенность:** Высокая  
+**Применимость:** 2022 — год геополитического шока; то, что модели сохранили точность выше baseline даже в этот период, обнадёживает.
 
-### 2.2 Bollinger Bands on Daily FX Data
+### 1.2 Детектирование локальных минимумов / точек выгодного входа
 
-**Finding:** Bollinger Band mean-reversion signals (price touching lower band → reversion to 20-SMA) show ~60% win rate and documented success rates above 57% on volatility-decile filtered portfolios. The constraint is regime-dependence: in trending markets, mean-reversion is a "blowup waiting to happen."  
-**Source:** Bollinger Band robust testing study (JFI, accessed via search synthesis)  
-**Source:** CrossTrade, ForexTester backtests  
-**Confidence:** Med  
-**Applicability:** Bollinger Band lower-band touch is a valid confirming signal. Must be regime-filtered. Use 2σ bands on 20-day window as standard; may need wider bands for high-volatility CIS pairs (KGS, AMD).
+**Находка:** В академической литературе существует supervised ML-фреймворк для предсказания рыночных трофеев (локальных минимумов). Подход использует меры волатильности, индикаторы ликвидности, ценовые сигналы и переменные микроструктуры рынка, оценивается precision/recall/F1 с SHAP + анализом причинно-следственных связей.  
+**Источник:** arXiv 2509.05922 — "Predicting Market Troughs: A Machine Learning Approach with Causal Interpretation" (2025)  
+**Уверенность:** Средняя (извлечение из абстракта; полная методология не получена)  
+**Применимость:** Высокая — ближайший академический аналог точного кейса. Фреймворк напрямую отображается: заменить equity-переменные микроструктуры на FX-волатильность, прокси carry-trade и скользящие перцентильные признаки.
 
-**Finding:** Bollinger Bands assume normally distributed returns; CIS currencies exhibit fat tails, so band touches occur more frequently than the 95% confidence interval implies. This means the signal fires more often than expected — which could be either good (more opportunities) or bad (more false positives in trending regimes).  
-**Source:** General FX practitioner literature (UEXO, TradingCompendium)  
-**Confidence:** High  
-**Applicability:** This is a known pitfall. Percentile-based bands (empirical quantiles) are preferable to σ-based bands for non-normal CIS currency distributions.
+**Находка:** Ни одной академической статьи, адресующей «оптимальное время для розничного перевода» как задачу детектирования сигнала на парах СНГ/RUB, не найдено. Это открытая ниша.  
+**Уверенность:** Высокая (исчерпывающий поиск)  
+**Применимость:** Подтверждает оригинальность проекта; нет прямого prior art в открытой литературе.
 
-### 2.3 Momentum Indicators
+### 1.3 Перцентильные сигналы
 
-**Finding:** Currency momentum (3–12 month look-back) shows documented cross-sectional spread of up to 10% p.a. between winner and loser currencies, but this applies to cross-sectional portfolios (long strong, short weak). At daily horizons, momentum fails; reversal dominates.  
-**Source:** BIS Working Paper No. 366 — "Currency Momentum Strategies" (PDF — content not retrievable but abstract confirmed)  
-**Confidence:** High for cross-sectional momentum; High for daily reversal  
-**Applicability:** Do NOT use short-term momentum for daily signal generation on individual pairs. Cross-sectional momentum (comparing RUB/TJS relative strength vs. RUB/UZS) could be used as a secondary feature but is not the primary signal.
-
----
-
-## Section 3: ML Approaches for Binary Signal Classification
-
-### 3.1 LightGBM / XGBoost vs. Classical Approaches
-
-**Finding:** LightGBM and XGBoost consistently outperform logistic regression and classical threshold rules on financial signal classification tasks, achieving higher minority-class recall, F1-score, and ROC-AUC under class imbalance conditions. XGBoost demonstrates the strongest overall balance between discriminatory capability and minority-event sensitivity.  
-**Source:** arXiv 2605.14067 — "Comparative Evaluation of ML for Minority-Class Financial Distress Prediction Under Class Imbalance"  
-**Confidence:** High  
-**Applicability:** LightGBM is the right choice for the signal classifier. Logistic regression is useful as an explainability baseline and sanity check.
-
-**Finding:** Regime-aware LightGBM (conditioning predictions on HMM-detected market states) outperforms standard LightGBM for stock market direction. The framework uses rolling HMM + walk-forward validation + SHAP. Key finding: cross-asset features contribute most predictive value; SHAP reveals regime-dependent decision logic.  
-**Source:** MDPI Electronics 15(6), 1334 — "Regime-Aware LightGBM for Stock Market Forecasting" (2026)  
-**Confidence:** High  
-**Applicability:** This is the strongest single academic precedent. Directly applicable: replace cross-asset equity features with macro RUB indicators (oil price, USD/RUB) + CIS-specific features. The HMM regime conditioning addresses the 2022 structural break concern explicitly.
-
-### 3.2 Walk-Forward Validation Methodology
-
-**Finding:** Purged walk-forward cross-validation (López de Prado methodology) is the industry standard to prevent lookahead bias in financial ML. Key components: (1) rolling or expanding train window, (2) purging — removing training samples whose labels overlap in time with test samples, (3) embargo — excluding a buffer period between train and test. Combinatorial Purged Cross-Validation (CPCV) further reduces Probability of Backtest Overfitting (PBO).  
-**Source:** Wikipedia — "Purged cross-validation"; GitHub — Walk-Forward Backtester (López de Prado inspired); arXiv 2512.12924  
-**Confidence:** High  
-**Applicability:** Mandatory implementation requirement. For daily CBR data with 1-day signal lag, a 5-day embargo is likely sufficient. Recommended window: 2-year rolling train, 3-month test, step-forward quarterly.
-
-**Finding:** Walk-forward validation across 34 independent test periods (2015–2024 on US equities) with strict information-set discipline showed aggregate statistically insignificant results (p=0.34), but high-volatility periods showed 0.60% quarterly returns vs. stable periods at −0.16%. Signals require elevated information arrival to function effectively.  
-**Source:** arXiv 2512.12924 — "Interpretable Hypothesis-Driven Trading: A Rigorous Walk-Forward Validation Framework for Market Microstructure Signals"  
-**Confidence:** High  
-**Applicability:** Critical caution. This study is on equities, but the regime-dependence finding applies: daily OHLC signals work better in high-volatility, high-information regimes. For CIS currencies, volatility is often elevated (favorable condition for the signal to work), but structured testing on the specific data is essential.
-
-### 3.3 Asymmetric Loss Functions for Imbalanced Classification
-
-**Finding:** For imbalanced binary classification in finance, LightGBM supports `is_unbalance=True` and `scale_pos_weight` for class weighting. Focal loss (from Imbalance-XGBoost) with tuned α (weighting) and γ (focusing) parameters improves minority-class recall but requires careful tuning to avoid overfitting on small datasets.  
-**Source:** GitHub jhwjhw0123/Imbalance-XGBoost; search synthesis  
-**Confidence:** High  
-**Applicability:** "Favorable day" is the minority class. Use `is_unbalance=True` in LightGBM as default. Evaluate with precision-recall AUC, not accuracy. Set decision threshold by maximizing lift at target frequency (1–2 signals/week), not by maximizing F1.
-
-### 3.4 SHAP for Explainability
-
-**Finding:** SHAP (SHapley Additive exPlanations) is model-agnostic and provides consistent, locally accurate attributions for both logistic regression and tree models. For LightGBM, TreeSHAP is computationally efficient. SHAP summary plots have been validated on EUR/USD XGBoost classification tasks. Regime-aware models show regime-dependent SHAP patterns — features shift in importance across regimes.  
-**Source:** arXiv 2303.16149 — "Explaining Exchange Rate Forecasts with Macroeconomic Fundamentals Using Interpretive ML"; MDPI Electronics 15(6) 1334  
-**Confidence:** High  
-**Applicability:** SHAP is the correct explainability tool. Each signal notification should be traceable to 2–3 top SHAP features (e.g., "Rate is in bottom 15th percentile of 30-day range, RSI=32, volatility is low"). This satisfies the "no black box" constraint.
+**Находка:** 20-дневный перцентиль реализованной волатильности эмпирически задокументирован для сегментации режимов EUR/USD (Низкий <10-й перц., Нормальный 10–90-й, Высокий >90-й). Перцентильный ранг — model-agnostic и distribution-free, что даёт преимущество перед z-score для ненормальных распределений валют СНГ.  
+**Источник:** Синтез из количественных FX-практиков и академической литературы  
+**Источник:** Fintech-продукт Neomy (продакшн) — сравнение с 30-дневной скользящей средней как порог для алертов "Top", "Mid", "No Go"  
+**Уверенность:** Высокая  
+**Применимость:** Прямая. Рекомендован как основной сигнальный признак. Для валют СНГ с тяжёлыми хвостами перцентильный ранг предпочтительнее z-score.
 
 ---
 
-## Section 4: Regime Change / Structural Break Detection
+## Раздел 2: Rule-based технические индикаторы — эмпирическая эффективность
 
-### 4.1 The 2022 Geopolitical Shock
+### 2.1 RSI на дневных FX данных
 
-**Finding:** Bai-Perron and sup-Wald structural break tests recover the February 24, 2022 (Ukraine invasion) regime shift within 10 trading days without prior event conditioning. Before sanctions, RUB stock-FX correlations follow portfolio-balance dynamics; after February 2022, the mandatory foreign currency surrender mechanism severs the normal arbitrage channel, fundamentally changing RUB behavior.  
-**Source:** ScienceDirect — "Conflict and exchange rate valuation: Evidence from the Russia-Ukraine conflict"  
-**Confidence:** High  
-**Applicability:** Training data pre-2022 and post-2022 should be treated as different regimes. Recommended approach: use data only from post-March 2022 (after the initial shock stabilized) as the primary training set, or use regime-conditional models that weight recent data more heavily.
+**Находка:** Стратегии возврата к среднему на RSI на дневных FX данных показывают win rate 55–70% в зависимости от пары и горизонта удержания, но статистическая значимость пара-специфична. Одно академическое исследование: USD/ILS показал значимость RSI(50) для горизонтов 3–7 дней, другие валюты ЕМ — нет.  
+**Источник:** Tandfonline 2024 — "The predictability of technical analysis in foreign exchange market using forward return: evidence from developed and emerging currencies"  
+**Уверенность:** Средняя  
+**Применимость:** RSI работает, но самостоятельно даёт убывающую отдачу. Лучше использовать как подтверждающий фильтр. Смешанные результаты для ЕМ — предупреждение: пары СНГ требуют калибровки.
 
-**Finding:** The Markov-switching GARCH framework applied to EUR/USD detected 77% Crisis allocation in 2022-Q3, correctly identifying the Fed tightening cycle and geopolitical shock period. The framework used rolling warm-start parameter initialization for walk-forward adaptation to structural breaks.  
-**Source:** arXiv 2606.06190 — "Multi-Scale Markov-Switching GARCH: Volatility Regime Detection in EUR/USD" (2026)  
-**Confidence:** High  
-**Applicability:** A simplified version (single-scale HMM on daily RUB volatility) is practical for this project. Three states: Calm / Normal / Crisis. Suppress signals during Crisis. The rolling warm-start initialization is a key best practice.
+**Находка:** Для дневных валютных пар возврат к среднему статистически значимее моментума (t-stat для фактора reversal: −4.074, p-value ≈ 0; t-stat для фактора моментума: 1.417, незначимо) на горизонте 1 месяца.  
+**Источник:** QuantConnect research — "Combining Mean Reversion and Momentum in Forex Market" — https://www.quantconnect.com/research/15255/combining-mean-reversion-and-momentum-in-forex-market/  
+**Уверенность:** Высокая  
+**Применимость:** Критическая находка. **Возврат к среднему — правильное семейство сигналов** для этого кейса на дневном/недельном горизонте. Моментумное продолжение — для многомесячных горизонтов.
 
-### 4.2 Practical Regime Detection Methods
+**Находка:** Условия перепроданности RSI (RSI < 30) предшествовали разворотам с частотой 60–79% в задокументированных бэктестах при подтверждении ценовой структурой. Однако опубликованные заявления о «91% win rate» вероятно сфабрикованы или являются результатом переобучения.  
+**Уверенность:** Низкая-Средняя для высоких цифр; Средняя для диапазона 60% с подтверждением  
+**Применимость:** RSI < 35 как подтверждающий фильтр, не самостоятельный сигнал. Цель: 55–60% precision по положительному классу.
 
-**Finding:** For practical implementation on daily FX data, the following methods are available in Python with documented financial applications:
-- **CUSUM (CusumDetector via Kats/ruptures library)**: Detects mean shifts. Simple, interpretable. Best for detecting when the "center of gravity" of the rate has shifted.
-- **Hidden Markov Model (hmmlearn library)**: Detects latent states (Calm/Turbulent/Crisis). Most suitable for this use case.
-- **Bai-Perron test (via strucchange in R or custom Python)**: Formal structural break testing. Best for ex-post analysis and deciding where to start training data.
-- **Rolling volatility percentile**: Simplest. Use 30-day realized volatility; if above 90th percentile of trailing 1-year, flag as Crisis regime.  
-**Source:** Towards Data Science CUSUM implementation; Kats documentation; arXiv 2606.06190  
-**Confidence:** High  
-**Applicability:** Recommend layered approach: (1) Rolling-volatility percentile as simple real-time regime indicator; (2) HMM for the full model; (3) Bai-Perron test used once to identify 2022 break date for training window decisions.
+### 2.2 Полосы Боллинджера на дневных FX данных
 
-### 4.3 Shannon Entropy Filtering
+**Находка:** Сигналы возврата к среднему Bollinger Band (касание нижней полосы → возврат к 20-SMA) показывают ~60% win rate и >57% успеха на портфелях с фильтром по перцентилю волатильности. Ограничение: зависимость от режима — в трендовых рынках стратегия возврата к среднему «взрывается».  
+**Уверенность:** Средняя  
+**Применимость:** Касание нижней полосы BB — валидный подтверждающий сигнал. Обязательно фильтровать по режиму. Полосы 2σ на 20-дневном окне как стандарт; для высоковолатильных пар СНГ (KGS, AMD) возможно потребуются более широкие полосы.
 
-**Finding:** Shannon entropy filtering (suppress trading when normalized entropy > 0.85 over HMM state probabilities) is documented to reduce false signals during high-uncertainty periods in multi-scale Markov-switching models.  
-**Source:** arXiv 2606.06190  
-**Confidence:** Med (documented in one paper; not independently replicated in findings)  
-**Applicability:** Useful as an additional circuit-breaker. When the HMM cannot confidently assign a regime (high entropy = near equal probability across states), suppress the signal.
+**Находка:** Полосы Боллинджера предполагают нормальное распределение доходностей; валюты СНГ имеют тяжёлые хвосты, поэтому касания полос происходят чаще, чем подразумевает 95% доверительный интервал.  
+**Уверенность:** Высокая  
+**Применимость:** Известная ловушка. Перцентильные полосы (эмпирические квантили) предпочтительнее σ-полос для ненормальных распределений валют СНГ.
 
----
+### 2.3 Моментум-индикаторы
 
-## Section 5: Remittance / Retail FX Signal Products in Production
-
-### 5.1 Industry Landscape
-
-All major production remittance alert systems use **simple threshold-based alerts** (user-defined target rate → notify when reached). No production system in the public domain uses ML-triggered proactive favorable-moment detection on CIS corridors. This is a genuine differentiation gap.
-
-| Product | Alert Type | Trigger Mechanism | CIS Coverage | Proactive? |
-|---------|-----------|-------------------|--------------|-----------|
-| Western Union | Threshold | User-set target rate | Partial | No |
-| Wise | Threshold | User-set target rate | Partial | No |
-| XE | Threshold | User-set target rate | Yes | No |
-| WorldRemit | Daily update | Once per day push | Limited | No |
-| Neomy | Relative threshold | 30-day rolling average comparison | Unknown | Partially |
-| Topremit (Indonesia) | Threshold | User-set target rate, July 2026 launch | No (IDR/CIS) | No |
-| ACE Money Transfer | Threshold | User-set target rate | Yes (some CIS) | No |
-
-**Sources:** Western Union blog; Wise rate alerts page; XE rate alerts page; WorldRemit push notifications page; Neomy exchange rate notifications page; Topremit TechTimes article (2026)  
-**Confidence:** High
-
-### 5.2 Neomy — The Closest Production Analog
-
-**Finding:** Neomy is the only publicly documented production system that uses relative/comparative logic rather than pure user-defined thresholds. It monitors all user-tracked rates in real-time, compares to a 30-day rolling average, and triggers alerts with severity labels ("Top," "Mid," "No Go," "Insane"). The specific numerical thresholds are proprietary.  
-**Source:** neomy.io exchange rate notifications page  
-**Confidence:** Med (marketing page; no technical disclosure)  
-**Applicability:** The Neomy architecture (rolling average comparison + severity labels) validates the rolling-percentile approach at the product level. The 30-day window is likely calibrated for weekly transfer decision cycles.
-
-### 5.3 US Patent Evidence for ML in Remittance Rate Timing
-
-**Finding:** US Patent 11087314B2 ("Adaptive Remittance Learning," Western Union subsidiary) discloses a predictive model using classification and probabilistic models (neural nets, multinomial logit, decision trees) that ingests historical exchange rates (6-month to 1-year windows), previous transaction patterns, location data, time-of-day, and seasonality patterns to predict transfer likelihood. The patent explicitly discloses a rate-change notification: "transmitting a notification to the user indicating that the exchange rate has changed to the new exchange rate."  
-**Source:** Google Patents US11087314B2  
-**Confidence:** High (patent is primary source)  
-**Applicability:** This patent confirms that (a) ML-informed remittance rate detection is patented territory — check IP implications, and (b) the feature set (historical rates, seasonality, time patterns) validates the planned feature engineering approach. The patent covers pre-population of UI and transaction likelihood, not proactive favorable-moment detection, so there is likely freedom to operate.
-
-### 5.4 CBR Data Availability
-
-**Finding:** CBR (Bank of Russia) publishes official daily exchange rates via cbr.ru with XML API access. Coverage includes AMD (Armenian Dram) and likely TJS, UZS, KGS, KZT. The Frankfurter data provider wraps CBR data covering 59 currencies since 1999. Multiple open-source Python wrappers exist (GeorgII-web/cbr-api-exchange, andrewfromtver/cbr-api).  
-**Source:** cbr.ru official page; frankfurter.dev CBR provider; GitHub repositories  
-**Confidence:** High  
-**Applicability:** Data availability is confirmed. Historical depth (since 1999) is more than sufficient, but only post-2022 data should be primary training set for the signal layer.
+**Находка:** Валютный моментум (горизонт 3–12 месяцев) показывает документированный кросс-секционный спред до 10% годовых между лидерами и аутсайдерами, но это применимо к кросс-секционным портфелям. На дневном горизонте моментум не работает — доминирует разворот.  
+**Источник:** BIS Working Paper No. 366 — "Currency Momentum Strategies"  
+**Уверенность:** Высокая  
+**Применимость:** НЕ использовать краткосрочный моментум для дневной генерации сигналов. Кросс-секционный моментум (сравнение относительной силы RUB/TJS vs RUB/UZS) — возможный вторичный признак.
 
 ---
 
-## Section 6: Push Notification Effectiveness
+## Раздел 3: ML-подходы для бинарной классификации сигналов
 
-### 6.1 Benchmarks for Financial Push Notifications
+### 3.1 LightGBM / XGBoost vs. классические подходы
 
-**Finding — CTR benchmarks:**
-- Finance/banking apps: ~8% average CTR (CleverTap)  
-- Fintech segmented campaigns: up to 9.35% CTR (14× above unsegmented fintech average)  
-- Android: 2.84% CTR; iOS: 2.09% CTR (Pushwoosh 2025 data)  
-- Personalized with user name: ~2× CTR vs. generic  
-- One trading app achieved 9.4× industry average CTR with dynamic content personalization  
-- Paysend: 17% average CTR using CleverTap segmentation (cited as ~10× industry average)  
-**Source:** CleverTap blog — "How Fintech Apps Can Boost Push Notification CTRs"; Pushwoosh Push Notification Benchmarks 2025  
-**Confidence:** High
+**Находка:** LightGBM и XGBoost стабильно превосходят логистическую регрессию и пороговые правила в задачах классификации финансовых сигналов: более высокий recall по миноритарному классу, F1 и ROC-AUC при несбалансированных классах.  
+**Источник:** arXiv 2605.14067 — "Comparative Evaluation of ML for Minority-Class Financial Distress Prediction Under Class Imbalance"  
+**Уверенность:** Высокая  
+**Применимость:** LightGBM — правильный выбор для классификатора сигналов. Логрег полезна как baseline для интерпретируемости и sanity check.
 
-**Finding — Retention and frequency:**
-- 1 push per week causes 10% of users to disable notifications; 6% uninstall  
-- Optimal promotional frequency: 1–2 per week; unsubscribe complaints rise markedly above 3–4 per week  
-- Apps sending notifications within first 90 days show 3× higher retention  
-- Suppressing notifications for 48–72 hours after negative user events (failed payment, fraud review) improves 30-day retention  
-**Source:** CleverTap fintech push blog; PushPilot fintech notification strategy  
-**Confidence:** High  
-**Applicability:** The project's planned frequency of 1–2 signals per corridor per week is exactly in the optimal zone. This is independently validated.
+**Находка:** Режим-осознанный LightGBM (обусловленный на HMM-детектированных состояниях рынка) превосходит стандартный LightGBM. Фреймворк: rolling HMM + walk-forward валидация + SHAP. Кросс-активные признаки вносят наибольший вклад; SHAP раскрывает зависящую от режима логику решений.  
+**Источник:** MDPI Electronics 15(6), 1334 — "Regime-Aware LightGBM for Stock Market Forecasting" (2026)  
+**Уверенность:** Высокая  
+**Применимость:** Наиболее сильный академический прецедент для применения. Прямо применимо: заменить equity-признаки на макро-индикаторы RUB (нефть, USD/RUB) + специфику СНГ.
 
-**Finding — Timing peaks:**
-Midnight–1 AM, 7–8 AM, 12–1 PM, and 1–2 PM show peak engagement. Context-driven timing (payday for spending summaries, pre-due-date for bill reminders) outperforms fixed scheduling.  
-**Source:** CleverTap fintech push blog  
-**Confidence:** Med (aggregate, not FX-alert specific)  
-**Applicability:** For rate alerts, morning timing (7–8 AM) is most actionable — users can decide on a same-day transfer. Avoid midnight.
+### 3.2 Методология walk-forward валидации
 
-### 6.2 What Makes a Rate Alert Actionable
+**Находка:** Purged walk-forward кросс-валидация (методология Лопеса де Прадо) — отраслевой стандарт предотвращения lookahead-смещения. Компоненты: (1) скользящее или расширяющееся обучающее окно, (2) очистка — удаление обучающих примеров с метками, перекрывающими тестовые, (3) эмбарго — буферный период между обучением и тестом. Рекомендуемое окно: 2 года обучения, 3 месяца тест, квартальный сдвиг. Эмбарго 5 дней достаточно для дневных CBR данных.  
+**Источник:** Wikipedia — "Purged cross-validation"; arXiv 2512.12924  
+**Уверенность:** Высокая  
+**Применимость:** Обязательное требование реализации.
 
-**Finding:** Actionable financial push notifications share: (1) specificity — exact amounts and named values, (2) factual framing — no hype, (3) context-awareness — personalized to user state, (4) single clear action. Urgency without context reads as manipulation in fintech.  
-**Source:** PushPilot fintech notification strategy blog  
-**Confidence:** High  
-**Applicability:** Alert copy should include the specific rate, the percentile context ("Rate is at a 30-day low"), and a single CTA ("Send now"). Avoid vague claims like "Great rate today!"
+**Находка:** Walk-forward валидация на 34 независимых тестовых периодах (2015–2024) показала: сигналы работают лучше в периодах высокой волатильности (0.60% квартального дохода vs −0.16% в стабильные периоды). Сигналы требуют повышенного информационного потока.  
+**Источник:** arXiv 2512.12924  
+**Уверенность:** Высокая  
+**Применимость:** Критическое предупреждение. Дневные сигналы работают лучше в режимах высокой волатильности/информации — для валют СНГ волатильность часто повышена, что благоприятно.
 
-### 6.3 Micro-Randomized Trial Evidence
+### 3.3 Асимметричные функции потерь для несбалансированной классификации
 
-**Finding:** A randomized trial on a behavior-change app found that notification timing and content personalization significantly affect engagement, but frequency beyond a threshold reduces long-term engagement even when short-term CTR appears healthy.  
-**Source:** PMC10337295 — "How Notifications Affect Engagement With a Behavior Change App: Results From a Micro-Randomized Trial"  
-**Confidence:** Med (behavior-change app, not FX specifically)  
-**Applicability:** Confirms the importance of an A/B testing infrastructure for notification optimization. The 1–2/week frequency cap is the right starting point; tune via A/B test.
+**Находка:** LightGBM поддерживает `is_unbalance=True` и `scale_pos_weight` для взвешивания классов. Focal loss с настроенными α и γ улучшает recall миноритарного класса, но требует тщательной настройки на малых датасетах.  
+**Уверенность:** Высокая  
+**Применимость:** «Выгодный день» — миноритарный класс. Использовать `is_unbalance=True` по умолчанию. Оценивать по precision-recall AUC, не по accuracy. Устанавливать порог решения максимизируя lift при целевой частоте (1–2 сигнала/неделю), а не F1.
+
+### 3.4 SHAP для интерпретируемости
+
+**Находка:** SHAP обеспечивает согласованные, локально точные атрибуции для логрег и древесных моделей. Для LightGBM TreeSHAP вычислительно эффективен. Режим-зависимые SHAP-паттерны задокументированы: признаки меняют важность в разных режимах рынка.  
+**Источник:** MDPI Electronics 15(6) 1334; arXiv 2303.16149  
+**Уверенность:** Высокая  
+**Применимость:** SHAP — правильный инструмент интерпретируемости. Каждый сигнал должен быть прослеживаем до 2–3 топ SHAP-признаков (например: «Курс в нижнем 15-м перцентиле за 30 дней, RSI=32, волатильность низкая»). Это закрывает требование «без чёрного ящика».
 
 ---
 
-## Section 7: Stale Price / Rate UX Patterns
+## Раздел 4: Детектирование смены режима / структурного перелома
 
-### 7.1 The Core Problem
+### 4.1 Геополитический шок 2022 года
 
-When a notification fires based on a "favorable" rate and the user opens the app 30–120 minutes later, the CBR rate is fixed for the day (daily rate), but the actual Alfa-Bank transfer rate at execution time may differ from the signal-triggering rate. This is an easier problem than real-time FX or airline fares because CBR rates are published once per business day — the rate is not stale within the same trading day.
+**Находка:** Тесты структурных переломов Bai-Perron и sup-Wald восстанавливают смену режима 24 февраля 2022 года (вторжение в Украину) в течение 10 торговых дней без предварительного события. До санкций корреляции акций/FX RUB следовали динамике портфельного баланса; после февраля 2022 механизм обязательной продажи валютной выручки разрывает нормальный арбитражный канал.  
+**Источник:** ScienceDirect — "Conflict and exchange rate valuation: Evidence from the Russia-Ukraine conflict"  
+**Уверенность:** Высокая  
+**Применимость:** Данные до и после 2022 — разные режимы. Рекомендация: использовать только данные после марта 2022 (после стабилизации первоначального шока) как основной обучающий набор, или режим-условные модели с повышенным весом недавних данных.
 
-**Finding:** CBR rates are fixed daily (official rate for the business day). This means the rate shown in a notification at 8 AM remains valid for the entire business day — the stale-rate problem is significantly less severe than airline fares or real-time FX trading. The applicable execution rate is Alfa-Bank's commercial spread on top of CBR, which may vary intraday.  
-**Confidence:** High  
-**Applicability:** Key architectural simplification. The signal fires based on yesterday's CBR rate (published for today), which is deterministic and fixed. The notification can show the exact rate. The only staleness risk is the bank's spread adjustment.
+**Находка:** Markov-switching GARCH фреймворк на EUR/USD определил 77% Crisis-аллокации в 2022-Q3, корректно идентифицировав цикл ужесточения ФРС и геополитический шок. Фреймворк использовал rolling warm-start инициализацию параметров для walk-forward адаптации к структурным переломам.  
+**Источник:** arXiv 2606.06190 — "Multi-Scale Markov-Switching GARCH: Volatility Regime Detection in EUR/USD" (2026)  
+**Уверенность:** Высокая  
+**Применимость:** Упрощённая версия (однослойный HMM на дневной волатильности RUB) практична для проекта. Три состояния: Calm / Normal / Crisis. Подавлять сигналы в Crisis.
 
-### 7.2 Airline / Travel Industry Patterns (Most Relevant Analogies)
+### 4.2 Практические методы детектирования режима
 
-**Finding:** Airline fare alert systems validate inventory before sending (pre-send validation pass), but fares can still expire in as little as 90 minutes. Industry accepted pattern: "An alert fires. You get the email. And the fare is gone. This happens." Best practice is to move immediately. No standard UX pattern for "fare expired" notification was found in public documentation.  
-**Source:** BusinessClassSignal blog — "How Fare Alerts Actually Work (Technical Deep Dive)"  
-**Confidence:** Med (single source, proprietary system)
+**Находка:** Для практической реализации на дневных FX данных доступны в Python:
+- **CUSUM (ruptures library)**: Детектирует сдвиги среднего. Прост, интерпретируем.
+- **Hidden Markov Model (hmmlearn)**: Детектирует латентные состояния. Наиболее подходящий.
+- **Тест Bai-Perron**: Формальное тестирование структурных переломов. Лучший для ex-post анализа и определения начала обучающих данных.
+- **Перцентиль скользящей волатильности**: Простейший. 30-дневная волатильность выше 90-го перцентиля за год → Crisis.  
+**Уверенность:** Высокая  
+**Применимость:** Рекомендован многоуровневый подход: (1) перцентиль волатильности как простой real-time индикатор; (2) HMM для полной модели; (3) тест Bai-Perron — однократно для определения даты перелома 2022.
 
-**Finding:** Google Flights addresses stale pricing by: (a) cache-refreshing prices on search, (b) confirming final price at booking redirect, (c) offering a "Price Guarantee" badge when confident in stability. The explicit message "this fare is expected to expire" creates urgency without deception.  
-**Source:** Google Flights community support; Thrifty Traveler Google Flights guide  
-**Confidence:** Med
+### 4.3 Фильтрация энтропии Шеннона
 
-**Finding:** Wise explicitly discloses rate staleness: "Exchange rates move frequently and the current rate might not be available for long. Getting this rate when making a transfer with Wise isn't guaranteed." This is presented as a terms-of-service acknowledgment, not a real-time UI element.  
-**Source:** Wise rate alerts page  
-**Confidence:** High
-
-### 7.3 Recommended UX Pattern for This Project
-
-Based on synthesis across travel, brokerage, and fintech sources, the recommended pattern for CBR daily rates:
-
-1. **Notification text:** "RUB→TJS rate is near a 30-day low — now may be a good time to send. Today's rate: X.XX [CTA: Open app]"
-2. **In-app landing (same day):** Show the confirmed current rate prominently. If rate has worsened since notification: display banner "Rate changed since your alert. Today's rate: X.XX (was X.XX when notified)."
-3. **In-app landing (next day — rate is now a new CBR rate):** Show a clear "This alert was for yesterday's rate. Today's rate: X.XX" message with fresh evaluation.
-4. **Never hide the fact that the rate has changed.** Travel industry research confirms that transparent rate change disclosure, while potentially discouraging the transaction, builds long-term trust that outweighs short-term conversion loss.
-
-**Confidence:** Med (synthesized from analogous industries; no direct fintech-rate-alert UX study found)
+**Находка:** Фильтрация энтропии Шеннона (подавление сигналов при нормализованной энтропии > 0.85 по вектору вероятностей HMM-состояний) снижает ложные сигналы в периоды высокой неопределённости.  
+**Источник:** arXiv 2606.06190  
+**Уверенность:** Средняя (задокументировано в одной статье)  
+**Применимость:** Полезный дополнительный circuit-breaker. Когда HMM не может уверенно определить режим — подавлять сигнал.
 
 ---
 
-## Contradictions & Open Questions
+## Раздел 5: Продуктовый ландшафт — fintech-системы алертов
 
-### Contradictions
+### 5.1 Обзор отрасли
 
-1. **RSI win rates vary wildly** (55–91%) across sources. The 91% figure (QuantifiedStrategies.com) almost certainly reflects curve-fitting or survivorship bias. Academic studies on emerging market FX find mixed RSI significance. **Resolution:** Use RSI only as a confirming filter (RSI < 35, not <30) in combination with rolling percentile. Do not rely on published backtest figures from trading strategy websites.
+Все крупные производственные системы алертов переводов используют **простые пороговые алерты** (пользователь устанавливает целевой курс → уведомление при достижении). Ни одна производственная система в открытом доступе не использует ML-triggered проактивное детектирование выгодного момента на коридорах СНГ. Это реальный разрыв для дифференциации.
 
-2. **Momentum vs. mean reversion:** Some sources suggest momentum works in FX at 3–12 month horizons, while others show reversal dominates at daily horizons. The QuantConnect study (t-stat of −4.074 for reversal vs. 1.417 for momentum) is the most rigorous single data point. **Resolution:** Use reversal/mean-reversion signals for daily signals. This project's 1–2 signals/week horizon is the short end where reversal dominates.
+| Продукт | Тип алерта | Механизм | Покрытие СНГ | Проактивный? |
+|---------|-----------|----------|-------------|-------------|
+| Western Union | Пороговый | Целевой курс пользователя | Частично | Нет |
+| Wise | Пороговый | Целевой курс пользователя | Частично | Нет |
+| XE | Пороговый | Целевой курс пользователя | Да | Нет |
+| WorldRemit | Ежедневный | Один пуш в день | Ограниченно | Нет |
+| Neomy | Относительный порог | Сравнение с 30-дневной средней | Неизвестно | Частично |
+| ACE Money Transfer | Пороговый | Целевой курс пользователя | Да (часть СНГ) | Нет |
 
-3. **Regime-aware complexity:** The multi-scale Markov-switching GARCH paper (arXiv 2606.06190) uses a complex 27-dimensional tensor + Mixture-of-Experts architecture. The simpler regime-aware LightGBM (MDPI 2026) uses a single rolling HMM. Both outperform baseline. **Resolution:** Start with simpler rolling-HMM approach; the complex architecture is not justified for daily signal generation with limited CIS currency history.
+**Уверенность:** Высокая
 
-### Open Questions
+### 5.2 Neomy — ближайший продуктовый аналог
 
-1. **How much RUB/CIS data exists post-2022?** Approximately 700–750 trading days from March 2022 to September 2026. This is a small dataset for ML — logistic regression and rule-based systems may actually outperform LightGBM with this data volume. **Recommendation:** Run both and compare OOS lift.
+**Находка:** Neomy — единственная задокументированная система, использующая относительную/сравнительную логику вместо чистых пользовательских порогов. Мониторит курсы в реальном времени, сравнивает с 30-дневной скользящей средней, триггерит алерты с уровнями серьёзности («Top», «Mid», «No Go», «Insane»).  
+**Источник:** neomy.io страница уведомлений об обменных курсах  
+**Уверенность:** Средняя (маркетинговая страница; технического раскрытия нет)  
+**Применимость:** Архитектура Neomy (сравнение с rolling average + уровни серьёзности) валидирует перцентильный подход на продуктовом уровне.
 
-2. **Are CIS currencies mean-reverting at all?** The academic literature covers developed market pairs and a few emerging market pairs (ZAR, BRL, MXN). No paper was found on TJS, UZS, KGS, AMD, KZT specifically. Their mean-reverting properties are assumed but not documented.
+### 5.3 Патент Western Union на ML в тайминге переводов
 
-3. **What is the actual transfer frequency distribution for RUB→CIS corridors?** If most transfers happen weekly (e.g., paycheck remittances), the 1–2 signals/week frequency cap aligns well. If users transfer monthly, a different cadence may be optimal.
-
-4. **What notification open rate and conversion rate should the team target?** No remittance-specific rate-alert conversion data was found. The 8% fintech CTR baseline is a reasonable starting assumption.
-
-5. **How does Alfa-Bank's commercial spread move relative to CBR rates?** If the spread is static (fixed percentage), the CBR rate fully determines favorability. If the spread varies, the signal needs to account for spread behavior.
-
----
-
-## Competitive / Academic Landscape
-
-### Academic Gap (Confirmed)
-No academic paper in arXiv, SSRN, or major journal was found addressing favorable-moment detection on RUB/CIS currency pairs for retail remittance. The closest papers cover: EUR/USD direction classification, market trough prediction (equity), and currency momentum on major/EM pairs. This is a genuine research gap and a hackathon opportunity.
-
-### Production Landscape
-All major remittance apps (Wise, Western Union, XE, WorldRemit, Revolut) use user-defined threshold alerts. The only partially proactive system found is Neomy (30-day rolling average comparison). No competitor uses ML-triggered favorable-moment notifications on CIS corridors. The 2026 Topremit rate alert launch (user-defined threshold on IDR pairs) shows the market is moving toward rate alerts, but still threshold-based.
-
-### Patent Landscape
-Western Union (US11087314B2) holds a patent on ML-informed remittance pre-population with rate awareness. The patent covers transfer likelihood prediction and rate-change notification during execution. Proactive "signal on CBR daily rate percentile" notifications are likely not covered, but legal review is recommended before production deployment.
+**Находка:** Патент США US11087314B2 («Adaptive Remittance Learning», дочерняя компания Western Union) раскрывает предсказательную модель, использующую классификацию и вероятностные модели (нейросети, мультиномиальный логит, деревья решений) на исторических курсах (окна 6 месяцев – 1 год), паттернах предыдущих транзакций, локации, времени суток и сезонности. Патент явно раскрывает уведомление об изменении курса.  
+**Источник:** Google Patents US11087314B2  
+**Уверенность:** Высокая (патент — первичный источник)  
+**Применимость:** (a) ML-информированное детектирование курса — запатентованная территория, проверить IP-последствия; (b) набор признаков (исторические курсы, сезонность, временные паттерны) валидирует планируемый feature engineering.
 
 ---
 
-## Applicability to This Project
+## Раздел 6: Эффективность пуш-уведомлений
 
-### What Works Directly
+### 6.1 Бенчмарки для финансовых пуш-уведомлений
 
-| Approach | Applicability Score | Action |
-|----------|-------------------|--------|
-| Rolling percentile rank (30-day window) | 10/10 | Implement as primary signal feature |
-| RSI (14-period) < 35 as confirming filter | 8/10 | Implement as secondary filter |
-| Rolling volatility percentile as regime filter | 9/10 | Implement — suppress signals in Crisis regime |
-| HMM 3-state regime detection | 7/10 | Implement in v2 if rule-based v1 shows lift |
-| LightGBM with `is_unbalance=True` | 8/10 | Implement as ML layer on top of rule signals |
-| SHAP for explainability | 9/10 | Mandatory — each signal must have SHAP attribution |
-| Walk-forward validation (purge + embargo) | 10/10 | Mandatory validation methodology |
-| Bai-Perron test on 2022 break | 8/10 | Use to set training data start date |
-| 1–2 signals/week frequency cap | 10/10 | Validated by notification fatigue research |
-| Morning delivery (7–8 AM) | 7/10 | Default timing; A/B test |
-| Specific rate + percentile in notification copy | 9/10 | Implement in notification text |
+**Находка — CTR:**
+- Finance/banking приложения: ~8% средний CTR (CleverTap)
+- Финтех сегментированные кампании: до 9.35% CTR (14× выше несегментированного baseline)
+- Android: 2.84% CTR; iOS: 2.09% CTR (Pushwoosh 2025)
+- Персонализированные с именем пользователя: ~2× CTR vs. универсальные
+- Paysend: 17% средний CTR с использованием CleverTap-сегментации  
+**Источник:** CleverTap blog; Pushwoosh Push Notification Benchmarks 2025  
+**Уверенность:** Высокая
 
-### What Requires Adaptation
+**Находка — Удержание и частота:**
+- 1 пуш в неделю → 10% пользователей отключают уведомления; 6% удаляют приложение
+- Оптимальная маркетинговая частота: 1–2 в неделю; жалобы на отписки резко растут выше 3–4 в неделю
+- Целевой cap проекта 1–2 сигнала/коридор/неделю — независимо подтверждён исследованием усталости от уведомлений  
+**Источник:** CleverTap fintech push blog; PushPilot fintech notification strategy  
+**Уверенность:** Высокая
 
-- **Academic FX ML results (EUR/USD, major pairs):** Accuracy ranges (53–58%) may not directly transfer to CIS pairs. CBR daily rates have different dynamics (administratively influenced, lower liquidity). Expect the rule-based baseline to be competitive.
-- **Regime detection from equity literature:** HMM/GARCH frameworks validated on equity data transfer in concept but need calibration on specific CIS pair behavior.
-- **Notification benchmarks (8% CTR):** Based on general fintech apps. Rate alerts specifically may have higher CTR because they are triggered by user-relevant financial conditions, not marketing.
+**Находка — Пиковое время:**
+Полночь–1:00, 7–8:00, 12–13:00, 13–14:00 — пиковые часы вовлечённости. Контекстно-ориентированный тайминг превосходит фиксированное расписание.  
+**Уверенность:** Средняя  
+**Применимость:** Для курсовых алертов утренний тайминг (7–8 утра) наиболее операционен — пользователи могут принять решение о переводе в тот же день.
 
-### What Does NOT Apply
+### 6.2 Что делает курсовой алерт действенным
 
-- Multi-day momentum signals (months-long horizon) — not relevant at daily/weekly signal frequency
-- High-frequency microstructure signals — CBR data is daily; no intraday structure
-- Complex multi-scale Markov-switching GARCH — over-engineered for ~700 training days of data
-- Neural network approaches (LSTM, transformer) — insufficient data volume; poor explainability
-
----
-
-## Recommended Next Steps (Technical Roadmap)
-
-### Phase 0 — Data Foundation (Week 1)
-1. **Pull CBR historical rates** for all 5 corridors (TJS, UZS, KGS, AMD, KZT) from 2020-01-01 to present via cbr.ru XML API or Frankfurter CBR wrapper
-2. **Run Bai-Perron structural break test** on each series — confirm February–March 2022 as the primary break date; set training window start to 2022-04-01 (post-stabilization)
-3. **Plot rolling 30-day mean and percentile bands** for each corridor — visual inspection to confirm mean-reversion behavior exists in the data
-
-### Phase 1 — Rule-Based Baseline (Week 1–2)
-4. **Implement rolling-percentile signal:** flag days when rate falls in the bottom 20th percentile of the trailing 30-day window
-5. **Add RSI(14) < 35 confirming filter**
-6. **Add regime filter:** suppress signals when 30-day realized volatility exceeds the 85th percentile of trailing 1-year volatility
-7. **Backtest walk-forward** (2022-04-01 to present, monthly step): measure lift = (average next-5-day return conditional on signal) / (unconditional average). Target ≥1.3
-8. **Calibrate frequency cap** to ensure ≤2 signals/corridor/week on average across the backtest
-
-### Phase 2 — ML Enhancement (Week 2–3)
-9. **Feature engineering:** build 15–20 features from the rule signals, lagged rates, rolling statistics, and macro inputs (USD/RUB level, oil price if available)
-10. **Train LightGBM classifier** (`is_unbalance=True`, label=1 if day is in bottom 20th percentile AND next 5 days show positive return) using walk-forward with 5-day embargo
-11. **SHAP analysis** on each training fold — confirm 2–3 dominant interpretable features; reject model if top features are unintuitive
-12. **Compare:** rule-based lift vs. LightGBM lift. If LightGBM lift > rule-based by <5%, keep rule-based (simpler, more robust, more explainable)
-
-### Phase 3 — Regime Integration (Week 3, optional)
-13. **Fit 3-state HMM** on daily log-return + realized volatility features for each corridor
-14. **Condition signal generation on Calm/Normal state only** — retest walk-forward lift
-15. **Implement Shannon entropy filter:** suppress signals when HMM state probability vector entropy > 0.85
-
-### Phase 4 — Notification Layer (Week 3–4)
-16. **Notification copy template:** "RUB→[Currency] rate is near a [N]-day low (bottom [P]th percentile). Today's rate: X.XX. [CTA]"
-17. **Stale rate handler:** if user opens app same day → show confirmed current rate; if next day → show "This alert was for [yesterday]'s rate" with fresh evaluation
-18. **Set default delivery time:** 8 AM local time
-19. **Frequency governance:** implement per-corridor signal cooldown of 72 hours minimum
-
-### Phase 5 — Validation & Iteration (Ongoing)
-20. **Paper trade:** run signal generator on live CBR data for 4 weeks before any user-facing deployment
-21. **A/B test notification copy** (percentile framing vs. absolute rate vs. trend language)
-22. **Track:** CTR, same-day transfer conversion rate, unsubscribe rate; target CTR ≥8% (fintech benchmark)
+**Находка:** Действенные финансовые пуш-уведомления имеют: (1) конкретность — точные суммы и именованные значения, (2) фактическое оформление — без хайпа, (3) контекстную осознанность, (4) одно чёткое действие. Срочность без контекста воспринимается как манипуляция в fintech.  
+**Применимость:** Текст алерта должен содержать конкретный курс, перцентильный контекст («Курс на 30-дневном минимуме»), одно CTA. Избегать расплывчатых утверждений типа «Отличный курс сегодня!»
 
 ---
 
-## Sources
+## Раздел 7: UX-паттерны при изменении цены между уведомлением и действием
 
-### Academic / Research
+### 7.1 Суть проблемы
+
+Курсы ЦБ РФ фиксированы на весь рабочий день — проблема устаревания значительно проще, чем в авиабилетах или real-time FX. Курс из утреннего уведомления остаётся действительным на весь рабочий день. Основной риск — коммерческий спред Альфа-Банка, который может меняться в течение дня.
+
+**Находка:** Курсы ЦБ фиксируются ежедневно (официальный курс на рабочий день). Курс в уведомлении в 8:00 остаётся действительным весь рабочий день — проблема устаревания значительно менее острая, чем в авиабилетах. Единственный риск — корректировка банковского спреда.  
+**Уверенность:** Высокая
+
+### 7.2 Авиа/Travel UX-паттерны (наиболее релевантные аналоги)
+
+**Находка:** Системы алертов авиабилетов валидируют наличие перед отправкой, но тарифы могут истечь в течение 90 минут. Нет стандартного UX-паттерна для уведомления «тариф истёк».  
+**Уверенность:** Средняя
+
+**Находка:** Google Flights: (a) обновляет цены при поиске, (b) подтверждает финальную цену при переходе к бронированию, (c) предлагает значок «Price Guarantee» при уверенности в стабильности.  
+**Уверенность:** Средняя
+
+**Находка:** Wise явно раскрывает устаревание курса: «Обменные курсы часто меняются, и текущий курс может быть недоступен долго». Это оформлено как отказ от ответственности в ToS, не как real-time UI элемент.  
+**Источник:** Wise rate alerts page  
+**Уверенность:** Высокая
+
+### 7.3 Рекомендуемый UX-паттерн для проекта
+
+На основе синтеза из travel, брокерских и fintech источников:
+
+1. **Текст уведомления:** «Курс RUB→TJS вблизи 30-дневного минимума (нижний X-й перцентиль). Текущий курс: X.XX [CTA: Открыть]»
+2. **Экран в приложении (тот же день):** Показать подтверждённый текущий курс. Если курс ухудшился: баннер «Курс изменился с момента алерта. Текущий: X.XX (при отправке: X.XX)»
+3. **Экран в приложении (следующий день):** Чёткое сообщение «Этот алерт был для курса [вчера]. Сегодняшний курс: X.XX» со свежей оценкой
+4. **Никогда не скрывать факт изменения курса.** Прозрачность строит долгосрочное доверие, превышающее краткосрочные потери конверсии
+
+**Уверенность:** Средняя (синтез из аналогичных отраслей; прямых исследований UX финансовых курсовых алертов не найдено)
+
+---
+
+## Противоречия и открытые вопросы
+
+### Противоречия
+
+1. **Win rate RSI варьируется** (55–91%) по источникам. Цифра 91% почти наверняка отражает переобучение. Академические исследования EM-FX показывают смешанную значимость RSI. **Решение:** Использовать RSI < 35 только как подтверждающий фильтр в комбинации с перцентилем. Не полагаться на опубликованные бэктест-цифры с трейдинговых сайтов.
+
+2. **Моментум vs возврат к среднему:** часть источников указывает на работу моментума на горизонтах 3–12 месяцев, другие показывают доминирование разворота на дневном горизонте. Исследование QuantConnect (t-stat −4.074 vs 1.417) — наиболее строгая точка данных. **Решение:** Сигналы возврата к среднему для дневного горизонта. Проект — 1–2 сигнала/неделю, именно там доминирует reversal.
+
+3. **Сложность режим-осознанных моделей:** Статья arXiv 2606.06190 использует сложную 27-мерную тензорную архитектуру. Более простой режим-осознанный LightGBM (MDPI 2026) использует один rolling HMM. Оба превосходят baseline. **Решение:** Начать с более простого rolling-HMM; сложная архитектура не оправдана для дневной генерации сигналов с ограниченной историей СНГ.
+
+### Открытые вопросы
+
+1. **Сколько данных RUB/СНГ после 2022?** Примерно 700–750 торговых дней с марта 2022 по сентябрь 2026. Малый датасет для ML — логистическая регрессия и rule-based могут превзойти LightGBM. **Рекомендация:** Запустить оба и сравнить OOS lift.
+
+2. **Склонны ли валюты СНГ к возврату к среднему?** Академическая литература покрывает развитые рынки и несколько EM-пар. Ни одной статьи по TJS, UZS, KGS, AMD, KZT не найдено. Свойства возврата к среднему — предположение, не задокументированный факт.
+
+3. **Каково реальное распределение частоты переводов RUB→СНГ?** Если большинство переводов еженедельны — cap 1–2 сигнала/неделю хорошо выровнен. Если ежемесячны — другой ритм оптимален.
+
+4. **Как движется коммерческий спред Альфа-Банка относительно курсов ЦБ?** Если спред статичен, курс ЦБ полностью определяет выгодность. Если спред варьируется, сигнал должен учитывать поведение спреда.
+
+---
+
+## Конкурентный и академический ландшафт
+
+### Академический разрыв (подтверждён)
+Ни одной статьи в arXiv, SSRN или крупных журналах по детектированию выгодного момента на парах RUB/СНГ для розничных переводов не найдено. Ближайшие статьи: классификация направления EUR/USD, предсказание рыночных трофеев (акции), моментум валют на основных/EM парах. Это реальный исследовательский разрыв и возможность хакатона.
+
+### Продуктовый ландшафт
+Все крупные приложения переводов используют пользовательские пороговые алерты. Единственная частично проактивная система — Neomy (сравнение с 30-дневной средней). Ни один конкурент не использует ML-triggered уведомления о выгодном моменте на коридорах СНГ.
+
+### Патентный ландшафт
+Western Union (US11087314B2) держит патент на ML-информированное предзаполнение переводов с осознанием курса. Проактивные уведомления «сигнал на перцентиле дневного курса ЦБ» скорее всего не покрыты, но рекомендуется юридическая проверка перед продуктовым запуском.
+
+---
+
+## Применимость к проекту
+
+| Подход | Оценка применимости | Действие |
+|--------|-------------------|---------|
+| Перцентильный ранг (30-дневное окно) | 10/10 | Реализовать как основной признак сигнала |
+| RSI(14) < 35 как подтверждающий фильтр | 8/10 | Реализовать как вторичный фильтр |
+| Перцентиль волатильности как фильтр режима | 9/10 | Реализовать — подавлять сигналы в Crisis |
+| HMM 3-состоянийный детектор режима | 7/10 | Реализовать в v2 если rule-based v1 показал lift |
+| LightGBM с `is_unbalance=True` | 8/10 | Реализовать как ML-слой поверх rule-сигналов |
+| SHAP для интерпретируемости | 9/10 | Обязательно — каждый сигнал с атрибуцией |
+| Walk-forward (purge + embargo) | 10/10 | Обязательная методология валидации |
+| Тест Bai-Perron на переломе 2022 | 8/10 | Для определения даты начала обучающих данных |
+| Cap 1–2 сигнала/неделю | 10/10 | Подтверждён исследованием усталости от уведомлений |
+| Утренняя доставка (7–8 утра) | 7/10 | Тайминг по умолчанию; A/B тестировать |
+
+---
+
+## Рекомендуемые следующие шаги (Технический роадмап)
+
+### Фаза 0 — Данные (Неделя 1)
+1. Скачать исторические курсы ЦБ РФ по 5 коридорам с 2020-01-01 через XML API cbr.ru
+2. Запустить тест Bai-Perron — подтвердить февраль–март 2022 как основную дату перелома; установить начало обучающего окна на 2022-04-01
+3. Построить rolling 30-дневное среднее и перцентильные полосы для каждого коридора — визуальное подтверждение возврата к среднему
+
+### Фаза 1 — Rule-based Baseline (Неделя 1–2)
+4. Реализовать перцентильный сигнал: флаг дней когда курс в нижнем 20-м перцентиле за 30 дней
+5. Добавить подтверждающий фильтр RSI(14) < 35
+6. Добавить фильтр режима: подавлять сигналы когда 30-дневная волатильность выше 85-го перцентиля за год
+7. Бэктест walk-forward (2022-04-01 по настоящее время, месячный шаг): измерить lift = (средняя доходность следующих 5 дней при сигнале) / (безусловное среднее). Цель ≥1.3
+8. Откалибровать частотный cap: ≤2 сигнала/коридор/неделю в среднем по бэктесту
+
+### Фаза 2 — ML-усиление (Неделя 2–3)
+9. Feature engineering: 15–20 признаков из rule-сигналов, лаговых курсов, скользящей статистики, макро (USD/RUB, нефть)
+10. Обучить классификатор LightGBM (`is_unbalance=True`, метка=1 если день в нижнем 20-м перцентиле И следующие 5 дней показывают положительную доходность) с walk-forward + эмбарго 5 дней
+11. SHAP-анализ на каждом фолде — подтвердить 2–3 доминирующих интерпретируемых признака; отклонить модель если топ-признаки неинтуитивны
+12. Сравнить: rule-based lift vs LightGBM lift. Если LightGBM lift > rule-based менее чем на 5 п.п. — оставить rule-based
+
+### Фаза 3 — Интеграция режимов (Неделя 3, опционально)
+13. Подобрать 3-состоянийный HMM на дневных log-return + волатильность для каждого коридора
+14. Обусловить генерацию сигналов на состоянии Calm/Normal — перетестировать walk-forward lift
+15. Реализовать фильтр энтропии Шеннона: подавлять сигналы при энтропии вектора вероятностей HMM > 0.85
+
+### Фаза 4 — Нотификационный слой (Неделя 3–4)
+16. Шаблон текста уведомления: «Курс RUB→[Валюта] вблизи [N]-дневного минимума (нижний [P]-й перцентиль). Текущий курс: X.XX. [CTA]»
+17. Обработчик устаревшего курса: тот же день → подтверждённый текущий курс; следующий день → «Этот алерт был для курса [вчера]»
+18. Время доставки по умолчанию: 8:00 по местному времени
+19. Cooldown: минимум 72 часа между сигналами по коридору
+
+---
+
+## Источники
+
+### Академические / Исследовательские
 1. arXiv 2409.04471 — "Predicting Foreign Exchange EUR/USD direction using machine learning" — https://arxiv.org/abs/2409.04471
 2. arXiv 2512.12924 — "Interpretable Hypothesis-Driven Trading: A Rigorous Walk-Forward Validation Framework" — https://arxiv.org/html/2512.12924v1
 3. arXiv 2606.06190 — "Multi-Scale Markov-Switching GARCH: Volatility Regime Detection in EUR/USD" — https://arxiv.org/html/2606.06190v1
 4. arXiv 2509.05922 — "Predicting Market Troughs: A Machine Learning Approach with Causal Interpretation" — https://arxiv.org/pdf/2509.05922
 5. arXiv 2107.14092 — "Feature importance recap and stacking models for forex price prediction" — https://arxiv.org/pdf/2107.14092
-6. arXiv 2410.19241 — "Enhancing Exchange Rate Forecasting with Explainable Deep Learning Models" — https://arxiv.org/abs/2410.19241
-7. arXiv 2605.14067 — "Comparative Evaluation of ML for Minority-Class Financial Distress Prediction" — https://arxiv.org/html/2605.14067
-8. MDPI Electronics 15(6) 1334 — "Regime-Aware LightGBM for Stock Market Forecasting" — https://www.mdpi.com/2079-9292/15/6/1334
-9. Wikipedia — "Purged cross-validation" — https://en.wikipedia.org/wiki/Purged_cross-validation
-10. BIS Working Paper No. 366 — "Currency Momentum Strategies" — https://www.bis.org/publ/work366.pdf
-11. Tandfonline 2024 — "Predictability of Technical Analysis in FX: Developed and Emerging Currencies" — https://www.tandfonline.com/doi/full/10.1080/23311975.2024.2428781
-12. QuantConnect Research — "Combining Mean Reversion and Momentum in Forex Market" — https://www.quantconnect.com/research/15255/combining-mean-reversion-and-momentum-in-forex-market/
-13. PMC10337295 — "How Notifications Affect Engagement: Micro-Randomized Trial" — https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10337295/
-14. ScienceDirect — "Conflict and exchange rate valuation: Russia-Ukraine" — https://www.sciencedirect.com/article/pii/S2405844023037349
+6. arXiv 2605.14067 — "Comparative Evaluation of ML for Minority-Class Financial Distress Prediction" — https://arxiv.org/html/2605.14067
+7. MDPI Electronics 15(6) 1334 — "Regime-Aware LightGBM for Stock Market Forecasting" — https://www.mdpi.com/2079-9292/15/6/1334
+8. BIS Working Paper No. 366 — "Currency Momentum Strategies" — https://www.bis.org/publ/work366.pdf
+9. QuantConnect Research — "Combining Mean Reversion and Momentum in Forex Market" — https://www.quantconnect.com/research/15255/combining-mean-reversion-and-momentum-in-forex-market/
+10. ScienceDirect — "Conflict and exchange rate valuation: Russia-Ukraine" — https://www.sciencedirect.com/article/pii/S2405844023037349
+11. PMC10337295 — "How Notifications Affect Engagement: Micro-Randomized Trial" — https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10337295/
 
-### Production Systems / Industry
-15. Western Union Rate Alerts — https://www.westernunion.com/blog/en/gb/how-to-set-up-live-exchange-rate-alerts/
-16. Wise Rate Alerts — https://wise.com/gb/tools/exchange-rate-alerts
-17. XE Rate Alerts — https://www.xe.com/en-us/ratealerts/
-18. WorldRemit Push Notifications — https://www.worldremit.com/en-us/worldremit-push-notifications
-19. Neomy Exchange Rate Notifications — https://neomy.io/exchange-rate-notifications.html
-20. Topremit Rate Alert Launch — https://www.techtimes.com/articles/322559/20260731/topremit-adds-rate-alert-rupiah-volatility-squeezes-indonesian-senders.htm
-21. US Patent 11087314B2 — "Adaptive Remittance Learning" (Western Union) — https://patents.google.com/patent/US11087314B2/en
-22. CBR Official Exchange Rates — https://www.cbr.ru/eng/currency_base/dynamics/
-23. Frankfurter CBR Data Provider — https://frankfurter.dev/providers/cbr/
+### Продуктовые системы / Отрасль
+12. Western Union Rate Alerts — https://www.westernunion.com/blog/en/gb/how-to-set-up-live-exchange-rate-alerts/
+13. Wise Rate Alerts — https://wise.com/gb/tools/exchange-rate-alerts
+14. XE Rate Alerts — https://www.xe.com/en-us/ratealerts/
+15. Neomy Exchange Rate Notifications — https://neomy.io/exchange-rate-notifications.html
+16. US Patent 11087314B2 — "Adaptive Remittance Learning" (Western Union) — https://patents.google.com/patent/US11087314B2/en
+17. CBR Official Exchange Rates — https://www.cbr.ru/eng/currency_base/dynamics/
 
-### Push Notification Benchmarks
-24. CleverTap — "How Fintech Apps Can Boost Push Notification CTRs" — https://clevertap.com/blog/how-fintech-apps-can-boost-push-notification-ctrs/
-25. Pushwoosh — "Push Notification Benchmarks 2025" — https://www.pushwoosh.com/blog/push-notification-benchmarks/
-26. Pushwoosh — "Fintech Push Notifications 2025" — https://www.pushwoosh.com/blog/push-notifications-fintech/
-27. PushPilot — "Fintech Push Notifications 2026: What Builds Trust" — https://pushpilot.ai/blog/fintech-push-notification-strategy
-28. EngageLab — "Fintech Push Notifications: Best Practices" — https://www.engagelab.com/blog/fintech-push-notifications-best-practices-use-cases
-
-### Stale Price UX
-29. BusinessClassSignal — "How Fare Alerts Actually Work (Technical Deep Dive)" — https://www.businessclasssignal.com/blog/how-fare-alerts-work-technical
-30. Wise Rate Tracker Terms — (see source 16 above)
-31. Smashing Magazine — "Design Guidelines For Better Notifications UX" — https://www.smashingmagazine.com/2025/07/design-guidelines-better-notifications-ux/
+### Бенчмарки пуш-уведомлений
+18. CleverTap — "How Fintech Apps Can Boost Push Notification CTRs" — https://clevertap.com/blog/how-fintech-apps-can-boost-push-notification-ctrs/
+19. Pushwoosh — "Push Notification Benchmarks 2025" — https://www.pushwoosh.com/blog/push-notification-benchmarks/
+20. PushPilot — "Fintech Push Notifications 2026: What Builds Trust" — https://pushpilot.ai/blog/fintech-push-notification-strategy
