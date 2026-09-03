@@ -152,7 +152,10 @@ def run_walkforward(
         # Compute scores once with cutoff = test_end
         scores = indicator.compute(df, corridor, test_end)
 
-        window_mask = (corridor_df["date"] >= pd.Timestamp(test_start)) & (
+        # Embargo: skip first embargo_days of test window to prevent label overlap
+        # between the indicator's rolling lookback and test signal extraction.
+        effective_test_start = test_start + timedelta(days=embargo_days)
+        window_mask = (corridor_df["date"] >= pd.Timestamp(effective_test_start)) & (
             corridor_df["date"] <= pd.Timestamp(test_end)
         )
         window_days = corridor_df.loc[window_mask & corridor_df["is_trading_day"], "date"]
