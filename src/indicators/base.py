@@ -27,5 +27,6 @@ class BaseIndicator(ABC):
         return bool(scores[cutoff_date] >= threshold)
 
     def _filter(self, df: pd.DataFrame, corridor: str, cutoff_date: date) -> pd.DataFrame:
-        mask = (df["corridor"] == corridor) & (df["date"] <= cutoff_date)
+        cutoff_ts = pd.Timestamp(cutoff_date)
+        mask = (df["corridor"] == corridor) & (df["date"] <= cutoff_ts)
         return df[mask].copy()
