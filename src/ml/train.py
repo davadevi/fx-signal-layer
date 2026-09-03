@@ -29,7 +29,6 @@ import pandas as pd
 from dateutil.relativedelta import relativedelta
 
 from src.backtest.metrics import (
-    apply_cooldown,
     base_rate_at_h,
     clustering_score,
     hit_rate_at_h,
@@ -44,6 +43,8 @@ OOT_START = date(2024, 1, 1)
 H_HORIZONS = [1, 3, 5, 10, 20]
 FP_WEIGHT = 3.0
 TARGET_SIGNAL_RATE = 1.0 / 3.0  # ~1 signal per 3 trading days (~1.5/wk)
+MANDATORY_SIGNAL_RATE = 1.0 / 10.0  # top ~10% of probs = mandatory
+OPTIONAL_SIGNAL_RATE = 1.0 / 3.0  # top ~33% of probs = optional (includes mandatory)
 
 LGB_PARAMS: dict[str, Any] = {
     "objective": "binary",
@@ -73,9 +74,17 @@ class MLResult:
     base_rate: dict[int, float]
     n_windows: int
     clustering_score: float
+    mandatory_count: int = 0
+    optional_count: int = 0
+    mandatory_lift: dict[int, float] = None  # type: ignore[assignment]
+    optional_lift: dict[int, float] = None  # type: ignore[assignment]
+    threshold_mandatory: float = float("nan")
+    threshold_optional: float = float("nan")
 
     def to_json(self) -> dict:
-        def _d(x: dict[int, float]) -> dict[str, float]:
+        def _d(x: dict[int, float] | None) -> dict[str, float]:
+            if x is None:
+                return {}
             return {str(k): v for k, v in x.items()}
 
         return {
@@ -90,6 +99,12 @@ class MLResult:
             "base_rate": _d(self.base_rate),
             "n_windows": self.n_windows,
             "clustering_score": self.clustering_score,
+            "mandatory_count": self.mandatory_count,
+            "optional_count": self.optional_count,
+            "mandatory_lift": _d(self.mandatory_lift),
+            "optional_lift": _d(self.optional_lift),
+            "threshold_mandatory": self.threshold_mandatory,
+            "threshold_optional": self.threshold_optional,
         }
 
 
@@ -109,6 +124,22 @@ def _pick_threshold(train_probs: np.ndarray, target_rate: float) -> float:
     q = 1.0 - target_rate
     q = min(max(q, 0.0), 1.0)
     return float(np.quantile(train_probs, q))
+
+
+def _pick_two_thresholds(
+    train_probs: np.ndarray,
+    mandatory_rate: float,
+    optional_rate: float,
+) -> tuple[float, float]:
+    """Returns (threshold_mandatory, threshold_optional) from training probs."""
+    if len(train_probs) == 0:
+        return 0.5, 0.5
+    q_mandatory = 1 - mandatory_rate
+    q_optional = 1 - optional_rate
+    return (
+        float(np.quantile(train_probs, q_mandatory)),
+        float(np.quantile(train_probs, q_optional)),
+    )
 
 
 def run_ml_walkforward(
@@ -143,6 +174,10 @@ def run_ml_walkforward(
     oot_signals: list[date] = []
     oot_trading_days: list[pd.Timestamp] = []
     thresholds: list[float] = []
+    thresholds_mand: list[float] = []
+    thresholds_opt: list[float] = []
+    mandatory_signals_all: list[date] = []
+    optional_signals_all: list[date] = []
     importances: list[np.ndarray] = []
     n_windows = 0
 
@@ -180,7 +215,12 @@ def run_ml_walkforward(
 
         train_probs = model.predict_proba(X_train.values)[:, 1]
         threshold = _pick_threshold(train_probs, TARGET_SIGNAL_RATE)
+        t_mand, t_opt = _pick_two_thresholds(
+            train_probs, MANDATORY_SIGNAL_RATE, OPTIONAL_SIGNAL_RATE
+        )
         thresholds.append(threshold)
+        thresholds_mand.append(t_mand)
+        thresholds_opt.append(t_opt)
         importances.append(model.feature_importances_.astype(float))
 
         # Test fold: features with cutoff = test_end (no post-test data leaked)
@@ -204,15 +244,39 @@ def run_ml_walkforward(
 
         X_test = test_feats_window.loc[valid_mask]
         test_probs = model.predict_proba(X_test.values)[:, 1]
-        fires = test_probs >= threshold
 
         # Regime suppression: crisis days (regime==0.0) get their signal killed.
         regime_vals = X_test["regime"].values
-        fires = fires & (regime_vals > 0.0)
+        alive = regime_vals > 0.0
 
-        raw_signals = [ts.date() for ts, fire in zip(X_test.index, fires) if fire]
-        cd_signals = apply_cooldown(raw_signals, cooldown_days=cooldown_days)
+        mandatory_mask = (test_probs >= t_mand) & alive
+        optional_mask = (test_probs >= t_opt) & (test_probs < t_mand) & alive
 
+        raw_mandatory = [ts.date() for ts, m in zip(X_test.index, mandatory_mask) if m]
+        raw_optional = [ts.date() for ts, m in zip(X_test.index, optional_mask) if m]
+
+        # Mandatory: no cooldown.
+        fold_mandatory = sorted(raw_mandatory)
+
+        # Optional: cooldown against mandatory (this fold + all history so far)
+        # + previously kept optional. Iterate in chronological order.
+        prior_dates = sorted(set(mandatory_signals_all + optional_signals_all + fold_mandatory))
+        fold_optional: list[date] = []
+        for d in sorted(raw_optional):
+            all_prior = prior_dates + fold_optional
+            if all_prior:
+                # keep only most recent prior date (list is sorted)
+                gap = (d - all_prior[-1]).days if all_prior[-1] <= d else cooldown_days
+                # check against every prior — signals could be out of order across folds
+                too_close = any(abs((d - p).days) < cooldown_days for p in all_prior)
+                if too_close:
+                    continue
+            fold_optional.append(d)
+
+        mandatory_signals_all.extend(fold_mandatory)
+        optional_signals_all.extend(fold_optional)
+
+        cd_signals = sorted(fold_mandatory + fold_optional)
         all_signals.extend(cd_signals)
         all_trading_days.extend(list(test_feats_window.index))
         if test_start >= OOT_START:
@@ -229,6 +293,14 @@ def run_ml_walkforward(
     base_rate = {hh: base_rate_at_h(trading_idx, rates_full, hh) for hh in H_HORIZONS}
     lift_A = {hh: lift_over_random(all_signals, rates_full, trading_idx, hh) for hh in H_HORIZONS}
     lift_A_oot = {hh: lift_over_random(oot_signals, rates_full, oot_idx, hh) for hh in H_HORIZONS}
+    mandatory_lift = {
+        hh: lift_over_random(mandatory_signals_all, rates_full, trading_idx, hh)
+        for hh in H_HORIZONS
+    }
+    optional_lift = {
+        hh: lift_over_random(optional_signals_all, rates_full, trading_idx, hh)
+        for hh in H_HORIZONS
+    }
 
     if all_trading_days:
         span_days = (max(all_trading_days) - min(all_trading_days)).days + 1
@@ -258,6 +330,12 @@ def run_ml_walkforward(
         base_rate=base_rate,
         n_windows=n_windows,
         clustering_score=clustering_score(all_signals),
+        mandatory_count=len(mandatory_signals_all),
+        optional_count=len(optional_signals_all),
+        mandatory_lift=mandatory_lift,
+        optional_lift=optional_lift,
+        threshold_mandatory=float(np.mean(thresholds_mand)) if thresholds_mand else float("nan"),
+        threshold_optional=float(np.mean(thresholds_opt)) if thresholds_opt else float("nan"),
     )
 
     if save_report:

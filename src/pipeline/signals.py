@@ -29,6 +29,7 @@ class Signal:
     percentile_rank: float
     rsi_score: float | None
     regime: str
+    tier: str  # "mandatory" | "optional"
 
 
 def _current_rate(df: pd.DataFrame, corridor: str, cutoff_date: date) -> float | None:
@@ -123,10 +124,12 @@ def generate_signals(
             indicator_name = "log_return_percentile_strong"
             strength = 1.0 - strong_val
             score_for_text = strong_val
+            tier = "mandatory"
         else:
             indicator_name = "log_return_percentile_weak"
             strength = 0.5 * (1.0 - weak_val)
             score_for_text = weak_val
+            tier = "optional"
 
         push = format_push_text(corridor, score_for_text, rate, "favorable_now")
         candidates.append(
@@ -140,8 +143,31 @@ def generate_signals(
                 percentile_rank=pct_val,
                 rsi_score=rsi_val,
                 regime=regime_str,
+                tier=tier,
             )
         )
 
-    candidates.sort(key=lambda s: s.strength, reverse=True)
-    return candidates[:max_per_week]
+    mandatory = [s for s in candidates if s.tier == "mandatory"]
+    optional = [s for s in candidates if s.tier == "optional"]
+
+    # Mandatory: all pass, no cooldown, no cap.
+    # Optional: cooldown check against ALL signals (mandatory + already-kept optional),
+    # then cap by remaining slots (max_per_week - len(mandatory), min 0).
+    mandatory.sort(key=lambda s: s.strength, reverse=True)
+    optional.sort(key=lambda s: s.strength, reverse=True)
+
+    kept_optional: list[Signal] = []
+    all_kept_dates: list[date] = [s.date for s in mandatory]
+    for s in optional:
+        conflict = any(
+            abs((s.date - d).days) < cooldown_days for d in all_kept_dates
+        )
+        if conflict:
+            continue
+        kept_optional.append(s)
+        all_kept_dates.append(s.date)
+
+    remaining_slots = max(max_per_week - len(mandatory), 0)
+    kept_optional = kept_optional[:remaining_slots]
+
+    return mandatory + kept_optional
