@@ -61,9 +61,13 @@ def generate_signals(
     key = pd.Timestamp(cutoff_date)
 
     # Primary signal: log-return percentile (I(0) transform, valid on trending series).
+    # OR-combination: strong (confirm=2) OR weak (confirm=0). Strong has priority.
     # Secondary: absolute-level percentile — kept for reporting only.
-    primary_ind = LogReturnPercentileIndicator(
+    strong_ind = LogReturnPercentileIndicator(
         return_window=5, rank_window=60, threshold=0.20, confirm_days=2
+    )
+    weak_ind = LogReturnPercentileIndicator(
+        return_window=5, rank_window=60, threshold=0.20, confirm_days=0
     )
     pct_ind = PercentileRankIndicator()
     rsi_ind = RSIFilter()
@@ -71,14 +75,28 @@ def generate_signals(
 
     candidates: list[Signal] = []
     for corridor in corridor_list:
-        primary_scores = primary_ind.compute(df, corridor, cutoff_date)
+        strong_scores = strong_ind.compute(df, corridor, cutoff_date)
+        weak_scores = weak_ind.compute(df, corridor, cutoff_date)
         pct_scores = pct_ind.compute(df, corridor, cutoff_date)
         regime_scores = regime_ind.compute(df, corridor, cutoff_date)
         rsi_scores = rsi_ind.compute(df, corridor, cutoff_date)
 
-        if key not in primary_scores.index or pd.isna(primary_scores.loc[key]):
+        strong_val = (
+            float(strong_scores.loc[key])
+            if key in strong_scores.index and not pd.isna(strong_scores.loc[key])
+            else float("nan")
+        )
+        weak_val = (
+            float(weak_scores.loc[key])
+            if key in weak_scores.index and not pd.isna(weak_scores.loc[key])
+            else float("nan")
+        )
+
+        strong_fires = not pd.isna(strong_val) and strong_val < strong_ind.threshold
+        weak_fires = not pd.isna(weak_val) and weak_val < weak_ind.threshold
+        if not (strong_fires or weak_fires):
             continue
-        primary_val = float(primary_scores.loc[key])
+
         pct_val = (
             float(pct_scores.loc[key])
             if key in pct_scores.index and not pd.isna(pct_scores.loc[key])
@@ -94,8 +112,6 @@ def generate_signals(
 
         if regime_str == "crisis":
             continue
-        if primary_val >= primary_ind.threshold:
-            continue
         if require_rsi and (rsi_val is None or rsi_val > rsi_ind.threshold / 100.0):
             continue
 
@@ -103,14 +119,23 @@ def generate_signals(
         if rate is None:
             continue
 
-        push = format_push_text(corridor, primary_val, rate, "favorable_now")
+        if strong_fires:
+            indicator_name = "log_return_percentile_strong"
+            strength = 1.0 - strong_val
+            score_for_text = strong_val
+        else:
+            indicator_name = "log_return_percentile_weak"
+            strength = 0.5 * (1.0 - weak_val)
+            score_for_text = weak_val
+
+        push = format_push_text(corridor, score_for_text, rate, "favorable_now")
         candidates.append(
             Signal(
                 date=cutoff_date,
                 corridor=corridor,
-                indicator=primary_ind.name,
+                indicator=indicator_name,
                 direction="favorable_now",
-                strength=1.0 - primary_val,
+                strength=strength,
                 push_text=push,
                 percentile_rank=pct_val,
                 rsi_score=rsi_val,

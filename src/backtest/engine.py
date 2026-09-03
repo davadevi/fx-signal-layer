@@ -87,7 +87,7 @@ def _signal_direction(indicator: BaseIndicator) -> str:
     Default: "below" for the indicators we ship.
     """
     name = getattr(indicator, "name", "")
-    if name in {"percentile_rank", "rsi_filter", "momentum", "log_return_percentile"}:
+    if name in {"percentile_rank", "rsi_filter", "momentum", "log_return_percentile", "log_ret_combined", "bollinger_zscore", "calendar_seasonality", "log_ret_and_calendar"}:
         return "below"
     return "above"
 
