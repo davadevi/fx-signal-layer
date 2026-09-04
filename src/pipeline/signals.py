@@ -14,6 +14,9 @@ from src.indicators import (
 )
 from src.texts.templates import format_push_text
 
+# Only confirm_days=2 (strong) variant is used. Validated: KGS lift 1.60, TJS 1.48,
+# CI lower > 1.07. The weak (confirm=0) combo is excluded — its CI does not pass 1.0.
+
 MAIN_CORRIDORS = ["RUB_TJS", "RUB_UZS", "RUB_KGS", "RUB_AMD", "RUB_KZT"]
 DATA_PATH = "data/processed/rates.parquet"
 
@@ -43,14 +46,18 @@ def generate_signals(
     cutoff_date: date,
     df: pd.DataFrame | None = None,
     corridors: list[str] | None = None,
-    cooldown_days: int = 3,  # noqa: ARG001 — reserved for full history-aware cooldown
-    max_per_week: int = 2,
+    cooldown_days: int = 3,
+    max_signals: int = 2,
     require_rsi: bool = False,
+    signal_history: list[date] | None = None,
 ) -> list[Signal]:
     """Generate favorable-rate signals for a single cutoff_date.
 
     Only data with date <= cutoff_date is used. Signals in a crisis volatility
-    regime are suppressed. Result is capped at max_per_week per call.
+    regime are suppressed. Result is capped at max_signals per call.
+
+    signal_history: previous signal dates for cross-call cooldown. Caller must
+        persist and pass this on each invocation.
     """
     if df is None:
         df = pd.read_parquet(DATA_PATH)
@@ -61,14 +68,8 @@ def generate_signals(
     corridor_list = corridors or MAIN_CORRIDORS
     key = pd.Timestamp(cutoff_date)
 
-    # Primary signal: log-return percentile (I(0) transform, valid on trending series).
-    # OR-combination: strong (confirm=2) OR weak (confirm=0). Strong has priority.
-    # Secondary: absolute-level percentile — kept for reporting only.
-    strong_ind = LogReturnPercentileIndicator(
+    signal_ind = LogReturnPercentileIndicator(
         return_window=5, rank_window=60, threshold=0.20, confirm_days=2
-    )
-    weak_ind = LogReturnPercentileIndicator(
-        return_window=5, rank_window=60, threshold=0.20, confirm_days=0
     )
     pct_ind = PercentileRankIndicator()
     rsi_ind = RSIFilter()
@@ -76,26 +77,18 @@ def generate_signals(
 
     candidates: list[Signal] = []
     for corridor in corridor_list:
-        strong_scores = strong_ind.compute(df, corridor, cutoff_date)
-        weak_scores = weak_ind.compute(df, corridor, cutoff_date)
+        scores = signal_ind.compute(df, corridor, cutoff_date)
         pct_scores = pct_ind.compute(df, corridor, cutoff_date)
         regime_scores = regime_ind.compute(df, corridor, cutoff_date)
         rsi_scores = rsi_ind.compute(df, corridor, cutoff_date)
 
-        strong_val = (
-            float(strong_scores.loc[key])
-            if key in strong_scores.index and not pd.isna(strong_scores.loc[key])
-            else float("nan")
-        )
-        weak_val = (
-            float(weak_scores.loc[key])
-            if key in weak_scores.index and not pd.isna(weak_scores.loc[key])
+        score_val = (
+            float(scores.loc[key])
+            if key in scores.index and not pd.isna(scores.loc[key])
             else float("nan")
         )
 
-        strong_fires = not pd.isna(strong_val) and strong_val < strong_ind.threshold
-        weak_fires = not pd.isna(weak_val) and weak_val < weak_ind.threshold
-        if not (strong_fires or weak_fires):
+        if pd.isna(score_val) or score_val >= signal_ind.threshold:
             continue
 
         pct_val = (
@@ -120,54 +113,32 @@ def generate_signals(
         if rate is None:
             continue
 
-        if strong_fires:
-            indicator_name = "log_return_percentile_strong"
-            strength = 1.0 - strong_val
-            score_for_text = strong_val
-            tier = "mandatory"
-        else:
-            indicator_name = "log_return_percentile_weak"
-            strength = 0.5 * (1.0 - weak_val)
-            score_for_text = weak_val
-            tier = "optional"
-
-        push = format_push_text(corridor, score_for_text, rate, "favorable_now")
+        push = format_push_text(corridor, score_val, rate, "favorable_now")
         candidates.append(
             Signal(
                 date=cutoff_date,
                 corridor=corridor,
-                indicator=indicator_name,
+                indicator="log_return_percentile",
                 direction="favorable_now",
-                strength=strength,
+                strength=1.0 - score_val,
                 push_text=push,
                 percentile_rank=pct_val,
                 rsi_score=rsi_val,
                 regime=regime_str,
-                tier=tier,
+                tier="mandatory",
             )
         )
 
-    mandatory = [s for s in candidates if s.tier == "mandatory"]
-    optional = [s for s in candidates if s.tier == "optional"]
+    history: list[date] = list(signal_history) if signal_history else []
 
-    # Mandatory: all pass, no cooldown, no cap.
-    # Optional: cooldown check against ALL signals (mandatory + already-kept optional),
-    # then cap by remaining slots (max_per_week - len(mandatory), min 0).
-    mandatory.sort(key=lambda s: s.strength, reverse=True)
-    optional.sort(key=lambda s: s.strength, reverse=True)
-
-    kept_optional: list[Signal] = []
-    all_kept_dates: list[date] = [s.date for s in mandatory]
-    for s in optional:
-        conflict = any(
-            abs((s.date - d).days) < cooldown_days for d in all_kept_dates
-        )
-        if conflict:
+    kept: list[Signal] = []
+    candidates.sort(key=lambda s: s.strength, reverse=True)
+    for s in candidates:
+        if any(abs((s.date - h).days) < cooldown_days for h in history):
             continue
-        kept_optional.append(s)
-        all_kept_dates.append(s.date)
+        kept.append(s)
+        history.append(s.date)
+        if len(kept) >= max_signals:
+            break
 
-    remaining_slots = max(max_per_week - len(mandatory), 0)
-    kept_optional = kept_optional[:remaining_slots]
-
-    return mandatory + kept_optional
+    return kept

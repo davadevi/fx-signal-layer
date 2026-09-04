@@ -2,9 +2,34 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date
+import json
+from datetime import date, timedelta
+from pathlib import Path
 
 from src.pipeline.signals import generate_signals
+
+HISTORY_PATH = Path("data/signal_history.json")
+HISTORY_RETENTION_DAYS = 30
+
+
+def _load_history() -> list[date]:
+    if not HISTORY_PATH.exists():
+        return []
+    try:
+        raw = json.loads(HISTORY_PATH.read_text())
+        cutoff = date.today() - timedelta(days=HISTORY_RETENTION_DAYS)
+        return [date.fromisoformat(r["date"]) for r in raw if date.fromisoformat(r["date"]) >= cutoff]
+    except Exception:
+        return []
+
+
+def _save_history(existing: list[date], new_signals: list) -> None:
+    HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    cutoff = date.today() - timedelta(days=HISTORY_RETENTION_DAYS)
+    records = [{"date": d.isoformat()} for d in existing if d >= cutoff]
+    for s in new_signals:
+        records.append({"date": s.date.isoformat(), "corridor": s.corridor})
+    HISTORY_PATH.write_text(json.dumps(records, indent=2, ensure_ascii=False))
 
 
 def main() -> None:
@@ -20,12 +45,17 @@ def main() -> None:
     args = parser.parse_args()
 
     cutoff = date.fromisoformat(args.cutoff_date)
+    history = _load_history()
+
     signals = generate_signals(
         cutoff_date=cutoff,
         corridors=args.corridors,
         cooldown_days=args.cooldown,
         require_rsi=args.require_rsi,
+        signal_history=history,
     )
+
+    _save_history(history, signals)
 
     if not signals:
         print(f"No signals on {cutoff}")
