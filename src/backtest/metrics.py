@@ -286,6 +286,42 @@ def lift_confidence_interval(
     )
 
 
+def bps_by_horizon(
+    signals: list[date],
+    rates: pd.Series,
+    horizons: list[int],
+) -> dict[int, float]:
+    """Average basis-point saving vs. transacting on a random future day, per horizon.
+
+    For each signal at time t and horizon h:
+        bps(t, h) = (mean(rate[t+1..t+h]) - rate[t]) / rate[t] * 10_000
+
+    Positive = signal day rate was cheaper than average of next-h days (client saved).
+    Negative = future rates were cheaper; client would benefit from waiting.
+    """
+    if not signals or rates.empty:
+        return {h: float("nan") for h in horizons}
+    result: dict[int, float] = {}
+    max_date = rates.index.max()
+    for h in horizons:
+        diffs: list[float] = []
+        for d in signals:
+            t = _to_timestamp(d)
+            t_end = t + pd.Timedelta(days=h)
+            if t not in rates.index or t_end > max_date:
+                continue
+            r_t = rates.loc[t]
+            if pd.isna(r_t) or r_t == 0:
+                continue
+            future = rates.loc[t + pd.Timedelta(days=1) : t_end]
+            if future.empty or future.isna().all():
+                continue
+            r_future_mean = float(future.dropna().mean())
+            diffs.append((r_future_mean - r_t) / r_t * 10_000)
+        result[h] = float(np.mean(diffs)) if diffs else float("nan")
+    return result
+
+
 def apply_cooldown(signal_days: list[date], cooldown_days: int = 3) -> list[date]:
     """Enforce a minimum gap between consecutive signals. Keeps the earliest."""
     if not signal_days:

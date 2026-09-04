@@ -19,6 +19,7 @@ from src.backtest.metrics import (
     apply_cooldown,
     base_rate_at_h,
     base_rate_at_h_below_avg,
+    bps_by_horizon,
     clustering_score,
     cost_of_waiting_bps,
     hit_rate_at_h,
@@ -51,6 +52,7 @@ class BacktestResult:
     signals_per_week: float
     clustering_score: float
     cost_of_waiting_bps: float
+    bps_by_horizon: dict[int, float]
     n_test_windows: int
     base_rate: dict[int, float]
     base_rate_b: dict[int, float]
@@ -74,6 +76,7 @@ class BacktestResult:
             "signals_per_week": self.signals_per_week,
             "clustering_score": self.clustering_score,
             "cost_of_waiting_bps": self.cost_of_waiting_bps,
+            "bps_by_horizon": _d(self.bps_by_horizon),
             "n_test_windows": self.n_test_windows,
             "base_rate": _d(self.base_rate),
             "base_rate_b": _d(self.base_rate_b),
@@ -243,6 +246,7 @@ def run_walkforward(
         signals_per_week=signals_per_week,
         clustering_score=clustering_score(all_signals),
         cost_of_waiting_bps=cost_of_waiting_bps(all_signals, rates_full),
+        bps_by_horizon=bps_by_horizon(all_signals, rates_full, horizons),
         n_test_windows=n_windows,
         base_rate=base_rate,
         base_rate_b=base_rate_b,
