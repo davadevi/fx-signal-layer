@@ -65,13 +65,19 @@ class LogReturnPercentileIndicator(BaseIndicator):
             rising = (td["rate"].diff() > 0).rolling(self.confirm_days).sum() == self.confirm_days
             pct_rank = pct_rank.where(rising, other=float("nan"))
 
-        # Reindex to full daily calendar and forward-fill for weekends
+        # Reindex to full daily calendar and forward-fill for weekend gaps only.
+        # On trading days, restore the original (possibly NaN) value so that
+        # ffill does not carry a confirmed c2 signal onto the next non-confirmed
+        # trading day.
         full_index = pd.date_range(
             start=filtered["date"].min(),
             end=filtered["date"].max(),
             freq="D",
         )
-        return pct_rank.reindex(full_index).ffill().rename("log_return_pct_rank")
+        result = pct_rank.reindex(full_index).ffill()
+        trading_ts = pd.DatetimeIndex(td.index)
+        result.loc[trading_ts] = pct_rank.reindex(trading_ts)
+        return result.rename("log_return_pct_rank")
 
     def get_signal(
         self,

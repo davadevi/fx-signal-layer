@@ -39,7 +39,7 @@ from src.ml.labels import make_labels
 
 
 TRAIN_START = date(2022, 4, 1)
-OOT_START = date(2024, 1, 1)
+OOT_START = date(2025, 7, 1)
 H_HORIZONS = [1, 3, 5, 10, 20]
 FP_WEIGHT = 3.0
 TARGET_SIGNAL_RATE = 1.0 / 3.0  # ~1 signal per 3 trading days (~1.5/wk)
@@ -198,9 +198,11 @@ def run_ml_walkforward(
         train_feats = build_features(df, corridor, train_end)
         train_labels = labels_full.reindex(train_feats.index)
 
+        # Exclude last h days: their labels require rate[t+h] from the test window (lookahead).
+        label_cutoff = train_end - timedelta(days=h)
         train_mask = (
             (train_feats.index >= pd.Timestamp(train_start))
-            & (train_feats.index <= pd.Timestamp(train_end))
+            & (train_feats.index <= pd.Timestamp(label_cutoff))
             & train_labels.notna()
             & train_feats.notna().all(axis=1)
         )

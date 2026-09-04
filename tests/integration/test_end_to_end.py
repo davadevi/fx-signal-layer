@@ -23,7 +23,7 @@ def test_generate_signals_no_future_data():
 
 
 def test_generate_signals_respects_cap():
-    signals = generate_signals(cutoff_date=date(2024, 6, 15), max_per_week=2)
+    signals = generate_signals(cutoff_date=date(2024, 6, 15), max_signals=2)
     assert len(signals) <= 2
 
 

@@ -24,8 +24,10 @@ def _forward_hits(
 ) -> tuple[int, int]:
     """Return (n_hits, n_eligible) using calendar-day offset for t+h.
 
-    rates must be a full daily-indexed series (weekends forward-filled)
-    so that rate[t+h] is defined for every calendar t.
+    Hit = pathwise: min(rate[t+1..t+h]) >= rate[t].
+    Matches the product definition: rate must not worsen on any day in the window,
+    since the client may open the push notification late.
+    rates must be a full daily-indexed series (weekends forward-filled).
     """
     if not len(days) or rates.empty:
         return 0, 0
@@ -39,11 +41,13 @@ def _forward_hits(
         if t_plus not in rates.index:
             continue
         r_t = rates.loc[t]
-        r_h = rates.loc[t_plus]
-        if pd.isna(r_t) or pd.isna(r_h):
+        if pd.isna(r_t):
+            continue
+        future_slice = rates.loc[t + pd.Timedelta(days=1) : t_plus]
+        if future_slice.empty or future_slice.isna().all():
             continue
         eligible += 1
-        if r_h >= r_t:
+        if float(future_slice.min()) >= r_t:
             hits += 1
     return hits, eligible
 
@@ -53,7 +57,7 @@ def hit_rate_at_h(
     rates: pd.Series,
     h: int,
 ) -> float:
-    """Fraction of signals where rate[t+h] >= rate[t]. NaN if no eligible."""
+    """Fraction of signals where min(rate[t+1..t+h]) >= rate[t] (pathwise). NaN if no eligible."""
     days = [_to_timestamp(d) for d in signals]
     hits, eligible = _forward_hits(days, rates, h)
     if eligible == 0:
@@ -169,7 +173,7 @@ def hit_rate_at_h_below_avg(
         if len(future_rates) < max(1, h // 2):
             continue
         eligible += 1
-        if rates.loc[t] < np.mean(future_rates):
+        if not pd.isna(rates.loc[t]) and rates.loc[t] < np.mean(future_rates):
             hits += 1
     if eligible == 0:
         return float("nan")
@@ -208,15 +212,20 @@ def lift_confidence_interval(
     n_resamples: int = 2000,
     confidence_level: float = 0.95,
     definition: str = "A",
+    block_days: int = 90,
 ) -> tuple[float, float]:
-    """Bootstrap CI for lift. Returns (ci_low, ci_high).
+    """Circular block bootstrap CI for lift.
 
-    definition="A": hit_rate_at_h (rate[t+h] >= rate[t])
-    definition="B": hit_rate_at_h_below_avg (rate[t] < mean future)
+    Jointly resamples signals and trading days in time blocks to account for
+    FX autocorrelation, overlapping horizons, and baseline estimation error.
+    block_days >= 90 is recommended.
     """
     from numpy.random import default_rng
 
     rng = default_rng(42)
+
+    if not signals or trading_days.empty or rates.empty:
+        return float("nan"), float("nan")
 
     if definition == "A":
         hit_fn = hit_rate_at_h
@@ -225,28 +234,55 @@ def lift_confidence_interval(
         hit_fn = hit_rate_at_h_below_avg
         base_fn = base_rate_at_h_below_avg
 
-    base = base_fn(trading_days, rates, h)
-    if not base or np.isnan(base):
+    sig_dates = sorted(signals)
+    td_sorted = sorted(trading_days)
+
+    if not sig_dates or not td_sorted:
         return float("nan"), float("nan")
 
-    sig_arr = np.array(signals)
-    if len(sig_arr) < 5:
+    min_date = min(pd.Timestamp(sig_dates[0]), td_sorted[0])
+    max_date = max(pd.Timestamp(sig_dates[-1]), td_sorted[-1])
+    total_days = (max_date - min_date).days + 1
+
+    if total_days < block_days:
         return float("nan"), float("nan")
+
+    n_blocks = max(1, round(total_days / block_days))
+
+    sig_set = set(sig_dates)
+    td_set = set(td_sorted)
 
     boot_lifts: list[float] = []
     for _ in range(n_resamples):
-        sample = list(rng.choice(sig_arr, size=len(sig_arr), replace=True))
-        hr = hit_fn(sample, rates, h)
-        if not np.isnan(hr):
-            boot_lifts.append(hr / base)
+        # Sample n_blocks block start offsets (circular)
+        starts = rng.integers(0, total_days, size=n_blocks)
+        boot_signals: list[date] = []
+        boot_td: list[pd.Timestamp] = []
+        for start in starts:
+            for day_offset in range(block_days):
+                d = (min_date + pd.Timedelta(days=int((start + day_offset) % total_days))).date()
+                if d in sig_set:
+                    boot_signals.append(d)
+                td_ts = pd.Timestamp(d)
+                if td_ts in td_set:
+                    boot_td.append(td_ts)
 
-    if not boot_lifts:
+        if not boot_signals or not boot_td:
+            continue
+        boot_idx = pd.DatetimeIndex(boot_td)
+        hr = hit_fn(boot_signals, rates, h)
+        br = base_fn(boot_idx, rates, h)
+        if not br or np.isnan(br) or np.isnan(hr):
+            continue
+        boot_lifts.append(hr / br)
+
+    if len(boot_lifts) < 50:
         return float("nan"), float("nan")
 
     alpha = 1 - confidence_level
     return (
-        float(np.quantile(boot_lifts, alpha / 2)),
-        float(np.quantile(boot_lifts, 1 - alpha / 2)),
+        float(np.quantile(boot_lifts, alpha / 2)),       # two-sided lower bound
+        float(np.quantile(boot_lifts, 1 - alpha / 2)),   # two-sided upper bound
     )
 
 

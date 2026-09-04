@@ -25,22 +25,27 @@ FORBIDDEN_PATTERNS: list[str] = [
 
 def format_push_text(
     corridor: str,
-    percentile_rank: float,
+    score: float,
     current_rate: float,
     direction: str,
 ) -> str:
-    """Generate compliant push text — present/past facts only."""
+    """Generate compliant push text — present/past facts only.
+
+    score: percentile rank of 5-day log-return in rolling 60-day window.
+    Low score = ruble strengthened more than usual recently.
+    """
     currency_name, _country = CURRENCY_NAMES.get(corridor, (corridor, ""))
-    pct = int(round(percentile_rank * 100))
+    stronger_pct = int(round((1.0 - score) * 100))
     if direction == "window_closing":
         return (
-            f"Курс рубля к {currency_name} растёт третий день. "
-            f"Сегодня ещё в нижней четверти за 30 дней ({pct}%). "
+            f"Рубль укреплялся к {currency_name} несколько дней подряд — "
+            f"курс ещё выгоднее, чем в {stronger_pct}% случаев за 3 месяца. "
             f"Текущий курс: {current_rate:.4f} руб."
         )
     # default: favorable_now
     return (
-        f"Курс рубля к {currency_name} — в нижних {pct}% за последние 30 дней. "
+        f"Рубль укрепился к {currency_name} за последние 5 дней "
+        f"сильнее, чем в {stronger_pct}% случаев за 3 месяца. "
         f"Текущий курс: {current_rate:.4f} руб."
     )
 

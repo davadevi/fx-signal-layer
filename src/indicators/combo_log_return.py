@@ -31,9 +31,6 @@ class CombinedLogReturnIndicator(BaseIndicator):
         self.threshold = 0.40  # engine fires when score < threshold
 
     def compute(self, df: pd.DataFrame, corridor: str, cutoff_date: date) -> pd.Series:
-        # no-lookahead compliance: filter first
-        self._filter(df, corridor, cutoff_date)
-
         strong = LogReturnPercentileIndicator(
             return_window=self.return_window,
             rank_window=self.rank_window,

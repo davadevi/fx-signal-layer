@@ -27,3 +27,4 @@ reports/*.html
 .env
 .venv/
 venv/
+.DS_Store

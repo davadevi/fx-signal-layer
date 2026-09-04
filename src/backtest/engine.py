@@ -28,10 +28,11 @@ from src.backtest.metrics import (
     lift_over_random_b,
 )
 from src.indicators.base import BaseIndicator
+from src.indicators.volatility_regime import VolatilityRegimeFilter
 
 TRAIN_START = date(2022, 4, 1)
 H_HORIZONS = [1, 3, 5, 10, 20]
-OOT_START = date(2024, 1, 1)
+OOT_START = date(2025, 7, 1)
 
 
 @dataclass
@@ -115,6 +116,7 @@ def run_walkforward(
     reports_dir: str = "reports",
     compute_ci: bool = True,
     ci_horizons: list[int] | None = None,
+    regime_filter: bool = True,
 ) -> BacktestResult:
     horizons = list(h_horizons) if h_horizons else list(H_HORIZONS)
 
@@ -168,6 +170,14 @@ def run_walkforward(
             fires = score < threshold if direction == "below" else score >= threshold
             if fires:
                 raw_signals.append(ts.date())
+        if regime_filter:
+            _regime_ind = VolatilityRegimeFilter()
+            _regime_scores = _regime_ind.compute(df, corridor, test_end)
+            raw_signals = [
+                d for d in raw_signals
+                if pd.Timestamp(d) not in _regime_scores.index
+                or float(_regime_scores.loc[pd.Timestamp(d)]) >= 0.5
+            ]
         cd_signals = apply_cooldown(raw_signals, cooldown_days=cooldown_days)
 
         all_signals.extend(cd_signals)
