@@ -21,7 +21,7 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 
 DATA_PATH = "data/processed/rates.parquet"
-OUT_PATH = "reports/signal_research_report.pdf"
+OUT_PATH = "reports/eda/signal_research_report.pdf"
 TRAIN_START = pd.Timestamp("2022-04-01")
 MAIN_CORRIDORS = ["RUB_TJS", "RUB_UZS", "RUB_KGS", "RUB_AMD", "RUB_KZT"]
 

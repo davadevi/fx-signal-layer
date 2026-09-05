@@ -24,7 +24,7 @@ warnings.filterwarnings("ignore")
 # ── Config ────────────────────────────────────────────────────────────────────
 
 DATA_PATH = "data/processed/rates.parquet"
-OUT_PATH = "reports/eda_report.pdf"
+OUT_PATH = "reports/eda/eda_report.pdf"
 TRAIN_START = pd.Timestamp("2022-04-01")
 MAIN_CORRIDORS = ["RUB_TJS", "RUB_UZS", "RUB_KGS", "RUB_AMD", "RUB_KZT"]
 CONTEXT_CORRIDORS = ["RUB_USD", "RUB_EUR", "RUB_CNY"]

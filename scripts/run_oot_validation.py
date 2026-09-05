@@ -96,13 +96,49 @@ def main() -> None:
     results_c0 = run_indicator(ind_c0, df)
     print_table(results_c0, "c0 (частый, confirm_days=0) — сравнение по частоте")
 
+    # ── c1: confirm_days=1 ────────────────────────────────────────────────────
+    print("\nRunning c1 (confirm_days=1)...")
+    ind_c1 = LogReturnPercentileIndicator(
+        return_window=5, rank_window=60, threshold=0.20, confirm_days=1
+    )
+    results_c1 = run_indicator(ind_c1, df)
+    print_table(results_c1, "c1 (confirm_days=1) — мягче c2")
+
+    # ── t25: threshold=0.25 ───────────────────────────────────────────────────
+    print("\nRunning t25 (threshold=0.25, confirm_days=2)...")
+    ind_t25 = LogReturnPercentileIndicator(
+        return_window=5, rank_window=60, threshold=0.25, confirm_days=2
+    )
+    results_t25 = run_indicator(ind_t25, df)
+    print_table(results_t25, "t25 (threshold=0.25, confirm=2) — шире порог")
+
+    # ── t30: threshold=0.30 ───────────────────────────────────────────────────
+    print("\nRunning t30 (threshold=0.30, confirm_days=2)...")
+    ind_t30 = LogReturnPercentileIndicator(
+        return_window=5, rank_window=60, threshold=0.30, confirm_days=2
+    )
+    results_t30 = run_indicator(ind_t30, df)
+    print_table(results_t30, "t30 (threshold=0.30, confirm=2) — ещё шире")
+
+    # ── w30: rank_window=30 ───────────────────────────────────────────────────
+    print("\nRunning w30 (rank_window=30, confirm_days=2)...")
+    ind_w30 = LogReturnPercentileIndicator(
+        return_window=5, rank_window=30, threshold=0.20, confirm_days=2
+    )
+    results_w30 = run_indicator(ind_w30, df)
+    print_table(results_w30, "w30 (rank_window=30, confirm=2) — короткое окно")
+
     # ── Сохранить JSON ────────────────────────────────────────────────────────
-    out_dir = Path("reports")
-    out_dir.mkdir(exist_ok=True)
+    out_dir = Path("reports/validation")
+    out_dir.mkdir(parents=True, exist_ok=True)
     stamp = date.today().isoformat()
     summary = {
         "c2": [r.to_json() for r in results_c2],
         "c0": [r.to_json() for r in results_c0],
+        "c1": [r.to_json() for r in results_c1],
+        "t25": [r.to_json() for r in results_t25],
+        "t30": [r.to_json() for r in results_t30],
+        "w30": [r.to_json() for r in results_w30],
     }
     out_path = out_dir / f"oot_validation_{stamp}.json"
     out_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
@@ -121,22 +157,31 @@ def main() -> None:
                     f"OOT={_fmt(oot)}, bps={_fmt_bps(bps_h)}"
                 )
 
-    # ── Сравнение частоты c2 vs c0 ────────────────────────────────────────────
-    print("\n--- Frequency comparison: c2 vs c0 (h=5, h=10) ---")
-    c2_map = {r.corridor: r for r in results_c2}
-    c0_map = {r.corridor: r for r in results_c0}
-    print(f"{'Corridor':<12} {'c2 Freq/wk':>12} {'c0 Freq/wk':>12} "
-          f"{'c2 CI↓ h=5':>12} {'c0 CI↓ h=5':>12}")
-    print("-" * 64)
-    for corridor in CORRIDORS:
-        r2 = c2_map[corridor]
-        r0 = c0_map[corridor]
-        ci2 = r2.lift_ci_low.get(5, float("nan"))
-        ci0 = r0.lift_ci_low.get(5, float("nan"))
-        print(
-            f"{corridor:<12} {r2.signals_per_week:>12.3f} {r0.signals_per_week:>12.3f} "
-            f"{_fmt(ci2):>12} {_fmt(ci0):>12}"
-        )
+    # ── Сводная таблица: все варианты ────────────────────────────────────────
+    print("\n--- Сводная таблица: Freq/wk vs OOT CI↓ (h=5, h=10) ---")
+    all_variants = {
+        "c2": results_c2,
+        "c0": results_c0,
+        "c1": results_c1,
+        "t25": results_t25,
+        "t30": results_t30,
+        "w30": results_w30,
+    }
+    print(f"{'Вариант':<8} {'Corridor':<12} {'Freq/wk':>8} {'CI↓ h=5':>9} "
+          f"{'CI↓ h=10':>10} {'OOT h=5':>9} {'OOT h=10':>10} {'bps h=10':>9}")
+    print("-" * 85)
+    for name, res_list in all_variants.items():
+        for r in res_list:
+            ci5  = r.lift_ci_low.get(5, float("nan"))
+            ci10 = r.lift_ci_low.get(10, float("nan"))
+            ot5  = r.out_of_time_lift.get(5, float("nan"))
+            ot10 = r.out_of_time_lift.get(10, float("nan"))
+            bps10 = r.bps_by_horizon.get(10, float("nan"))
+            print(
+                f"{name:<8} {r.corridor:<12} {r.signals_per_week:>8.3f} "
+                f"{_fmt(ci5):>9} {_fmt(ci10):>10} {_fmt(ot5):>9} {_fmt(ot10):>10} "
+                f"{_fmt_bps(bps10):>9}"
+            )
 
 
 if __name__ == "__main__":
