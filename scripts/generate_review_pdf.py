@@ -1,0 +1,641 @@
+"""Generate peer-review PDF for FX Signal Layer solution validation.
+
+Audience: human colleagues + LLMs asked to validate the solution.
+Run: .venv/bin/python scripts/generate_review_pdf.py
+Output: reports/review/fx_signal_layer_review.pdf
+"""
+from __future__ import annotations
+
+HTML = """<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.65;
+    color: #111;
+    background: #fff;
+  }
+
+  .cover {
+    background: #0f3460;
+    color: #fff;
+    padding: 56px 60px 44px;
+  }
+
+  .cover-eyebrow {
+    font-size: 8.5pt;
+    font-weight: 700;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: #e94560;
+    margin-bottom: 16px;
+  }
+
+  .cover h1 { font-size: 26pt; font-weight: 700; line-height: 1.2; margin-bottom: 10px; }
+  .cover-sub { font-size: 11.5pt; color: rgba(255,255,255,0.72); margin-bottom: 30px; }
+
+  .cover-meta {
+    display: flex; gap: 36px; flex-wrap: wrap;
+    font-size: 9pt; color: rgba(255,255,255,0.55);
+    border-top: 1px solid rgba(255,255,255,0.15);
+    padding-top: 20px;
+  }
+  .cover-meta span strong { display: block; color: #fff; font-size: 10pt; }
+
+  .body { padding: 44px 60px; }
+
+  h2 {
+    font-size: 14pt; font-weight: 700; color: #0f3460;
+    margin: 38px 0 14px;
+    padding-bottom: 7px;
+    border-bottom: 2.5px solid #e94560;
+  }
+
+  h3 { font-size: 11pt; font-weight: 700; color: #222; margin: 20px 0 8px; }
+
+  p { margin-bottom: 10px; }
+
+  /* LLM box */
+  .llm-box {
+    background: #0f3460;
+    color: #fff;
+    border-radius: 8px;
+    padding: 22px 24px;
+    margin: 14px 0 22px;
+  }
+  .llm-box .llm-title {
+    font-size: 9pt; font-weight: 700; letter-spacing: 1.5px;
+    text-transform: uppercase; color: #e94560; margin-bottom: 12px;
+  }
+  .llm-box p { color: rgba(255,255,255,0.88); margin-bottom: 8px; font-size: 10pt; }
+  .llm-box .prompt-block {
+    background: rgba(255,255,255,0.08);
+    border-left: 3px solid #e94560;
+    padding: 12px 14px;
+    border-radius: 0 6px 6px 0;
+    font-size: 9.5pt;
+    color: #fff;
+    margin: 10px 0 0;
+    font-style: italic;
+  }
+
+  /* claim blocks */
+  .claim {
+    background: #f5f7ff;
+    border-left: 4px solid #0f3460;
+    padding: 12px 16px;
+    margin: 8px 0 14px;
+    border-radius: 0 6px 6px 0;
+    font-size: 9.5pt;
+  }
+  .claim .claim-label {
+    font-size: 8pt; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; color: #0f3460; margin-bottom: 4px;
+  }
+  .claim .verify {
+    margin-top: 6px; font-size: 8.5pt; color: #666;
+  }
+  .claim code { background: #e4e8ff; padding: 1px 5px; border-radius: 3px; font-size: 8pt; }
+
+  /* fork / decision */
+  .fork-box {
+    border: 2px solid #e94560;
+    border-radius: 8px;
+    padding: 20px 22px;
+    margin: 14px 0 22px;
+    background: #fff8f8;
+  }
+  .fork-box .fork-title {
+    font-size: 11pt; font-weight: 700; color: #b00020; margin-bottom: 12px;
+  }
+  .fork-cols { display: flex; gap: 24px; }
+  .fork-col { flex: 1; }
+  .fork-col h4 { font-size: 10pt; font-weight: 700; color: #333; margin-bottom: 8px; }
+  .fork-verdict { font-size: 9pt; color: #555; margin-top: 10px; }
+  .fork-verdict strong { color: #b00020; }
+
+  .lead {
+    background: #f0f4ff;
+    border-left: 4px solid #0f3460;
+    padding: 15px 18px;
+    border-radius: 0 6px 6px 0;
+    margin-bottom: 22px;
+    font-size: 11pt;
+    line-height: 1.7;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.5pt;
+    margin: 10px 0 18px;
+  }
+  th {
+    background: #0f3460; color: #fff;
+    padding: 7px 10px; text-align: left; font-weight: 600;
+  }
+  td { padding: 6px 10px; border-bottom: 1px solid #e8eaf0; vertical-align: top; }
+  tr:nth-child(even) td { background: #f7f8fc; }
+  tr:last-child td { border-bottom: none; }
+  .hl td { background: #d4edda !important; font-weight: 600; }
+
+  .pass { color: #1a7a3e; font-weight: 700; }
+  .fail { color: #b00020; }
+  .warn { color: #b05000; }
+
+  .badge {
+    display: inline-block; padding: 2px 7px;
+    border-radius: 10px; font-size: 8pt; font-weight: 700;
+  }
+  .bg { background: #d4edda; color: #155724; }
+  .br { background: #f8d7da; color: #721c24; }
+  .bb { background: #d0e8ff; color: #0f3460; }
+
+  .code {
+    background: #1a1a2e; color: #a8d8a8;
+    padding: 13px 16px; border-radius: 6px;
+    font-family: 'Courier New', monospace; font-size: 8.5pt;
+    line-height: 1.7; margin: 8px 0 16px; white-space: pre;
+  }
+
+  ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 10px 0 18px; }
+  ol.steps li {
+    counter-increment: s;
+    padding: 10px 10px 10px 44px; position: relative;
+    border-left: 2px solid #e0e4f0; margin-bottom: 6px;
+  }
+  ol.steps li::before {
+    content: counter(s);
+    position: absolute; left: -13px; top: 9px;
+    width: 24px; height: 24px;
+    background: #0f3460; color: #fff;
+    border-radius: 50%; font-size: 8.5pt; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  ul.check { list-style: none; padding: 0; margin: 10px 0 18px; }
+  ul.check li {
+    padding: 9px 10px 9px 34px; position: relative;
+    border-bottom: 1px solid #f0f0f5; font-size: 10pt;
+  }
+  ul.check li::before { content: '☐'; position: absolute; left: 8px; color: #0f3460; font-size: 13pt; }
+  ul.check li code { background: #eef2ff; padding: 1px 5px; border-radius: 3px; font-size: 8pt; }
+
+  .lim {
+    background: #fff8e6; border: 1px solid #ffd166;
+    border-radius: 6px; padding: 13px 15px; margin: 8px 0 14px;
+  }
+  .lim strong { color: #a06000; }
+
+  .page-break { page-break-before: always; }
+
+  .footer {
+    margin-top: 40px; padding-top: 14px;
+    border-top: 1px solid #e8eaf0;
+    font-size: 8pt; color: #aaa; text-align: center;
+  }
+
+  .two { display: flex; gap: 22px; margin: 10px 0 18px; }
+  .two .col { flex: 1; }
+
+  .stat { background: #f0f4ff; border-radius: 8px; padding: 14px; text-align: center; margin-bottom: 10px; }
+  .stat .val { font-size: 22pt; font-weight: 700; color: #0f3460; line-height: 1; }
+  .stat .lbl { font-size: 8.5pt; color: #666; margin-top: 3px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ COVER ═══════════════ -->
+<div class="cover">
+  <div class="cover-eyebrow">Alfa-Bank Hackathon · Валидация решения</div>
+  <h1>FX Signal Layer</h1>
+  <div class="cover-sub">Алгоритм детектирования выгодного дня для трансграничных переводов</div>
+  <div class="cover-meta">
+    <span>Дата<strong>05.09.2026</strong></span>
+    <span>Защита<strong>07.09.2026</strong></span>
+    <span>Финальное решение<strong>c2 — LogReturnPercentile</strong></span>
+    <span>Коридоры<strong>KGS · TJS · AMD</strong></span>
+    <span>Репо<strong>github.com/davadevi/fx-signal-layer</strong></span>
+  </div>
+</div>
+
+<!-- ═══════════════ BODY ═══════════════ -->
+<div class="body">
+
+<!-- ─── ДЛЯ LLM ─── -->
+<h2>Этот документ — для людей и для LLM</h2>
+
+<div class="llm-box">
+  <div class="llm-title">Инструкция для LLM-ревьюера</div>
+  <p>Если вы — языковая модель, которой дали этот файл для валидации: ниже описано решение
+  алгоритма, ключевые утверждения и конкретные файлы для проверки. Каждый раздел
+  «Утверждение → Как проверить» даёт вам точку входа в код.</p>
+  <p>Главные вопросы, на которые нужен ответ:</p>
+  <p>1. Нет ли заглядывания в будущее (lookahead bias) в индикаторе и backtest-движке?<br>
+  2. Корректна ли формула lift — не завышена ли она из-за неправильного baseline?<br>
+  3. Корректна ли формула bps — правильный ли знак, правильный ли смысл?<br>
+  4. Является ли OOT split действительно чистым (параметры не менялись после 01.07.2025)?<br>
+  5. Имеет ли смысл выбор c2 над c0 с учётом trade-off частота/качество?</p>
+  <div class="prompt-block">
+    Рекомендуемый промпт: «Ты — квантовый аналитик. Изучи этот документ и код по указанным
+    путям. Проверь каждое утверждение в разделе "Чеклист для ревью". По каждому пункту скажи:
+    ПОДТВЕРЖДЕНО / ОШИБКА / ТРЕБУЕТ УТОЧНЕНИЯ — и объясни почему.»
+  </div>
+</div>
+
+<!-- ─── КОНТЕКСТ ─── -->
+<h2>Контекст задачи</h2>
+
+<div class="lead">
+  Альфа-Банк хочет отправлять push-уведомление клиенту, когда курс для трансграничного перевода
+  (рубль → валюты СНГ) <strong>нетипично выгоден прямо сейчас</strong>.
+  Цель: клиент переводит в «правильный» день и экономит на курсе.
+  Коридоры: RUB→KGS (Кыргызстан), RUB→TJS (Таджикистан), RUB→UZS (Узбекистан),
+  RUB→AMD (Армения), RUB→KZT (Казахстан). Данные: курсы ЦБ РФ, дневная частота.
+</div>
+
+<p><strong>Ключевые ограничения кейса:</strong></p>
+<table>
+  <tr><th>Ограничение</th><th>Что означает</th></tr>
+  <tr><td>Нет lookahead</td><td>Сигнал на дату T использует только данные ≤ T. Нарушение = дисквалификация.</td></tr>
+  <tr><td>Частота</td><td>Цель: 1–2 сигнала/коридор/неделю. Слишком редкие сигналы не решают продуктовую задачу.</td></tr>
+  <tr><td>Compliance push-текстов</td><td>Запрещены предсказания («скоро вырастет»), обещания («гарантируем»), срочность («успейте»). Только факты о прошлом/настоящем.</td></tr>
+  <tr><td>Error asymmetry</td><td>False positive (сказали «выгодно» → курс ухудшился) дороже, чем false negative (пропустили выгодный день).</td></tr>
+</table>
+
+<!-- ─── КАК РАБОТАЕТ ─── -->
+<h2>Как работает индикатор</h2>
+
+<ol class="steps">
+  <li>
+    <strong>5-дневный log-return.</strong>
+    log(rate[t] / rate[t−5]) — скорость изменения курса за 5 торговых дней.
+    Log-return от I(1)-ряда уровней — стационарен, percentile по нему теоретически корректен
+    (в отличие от percentile по уровню курса, который мы проверили и отвергли).
+  </li>
+  <li>
+    <strong>Percentile rank в окне 60 дней.</strong>
+    Доля прошлых log-return'ов, которые были <em>меньше</em> сегодняшнего.
+    Если score &lt; 0.20 → рубль укрепился быстрее, чем в 80% дней за последние 60 дней.
+    Реализация: скользящая lambda без lookahead в <code>log_return_percentile.py:56</code>.
+  </li>
+  <li>
+    <strong>Подтверждение 2 дня подряд (confirm_days=2).</strong>
+    Сигнал только если score &lt; 0.20 два торговых дня подряд.
+    Это фильтрует однодневные выбросы и снижает false positive rate.
+    Логика: <code>log_return_percentile.py:63–65</code>.
+  </li>
+  <li>
+    <strong>Кризисный фильтр (VolatilityRegimeFilter).</strong>
+    Если скользящая волатильность &gt; 85-го перцентиля за год — сигнал блокируется.
+    В кризис «нетипично быстрое укрепление» означает продолжение тренда, а не разворот.
+  </li>
+  <li>
+    <strong>Cooldown 3 дня.</strong>
+    После каждого сигнала — пауза 3 торговых дня на этом коридоре.
+    Предотвращает кластеры сигналов (подряд идущие события считаются одним).
+  </li>
+</ol>
+
+<div class="code">LogReturnPercentileIndicator(
+    return_window  = 5,    # N-дневный log-return (торговые дни)
+    rank_window    = 60,   # окно сравнения (торговые дни)
+    threshold      = 0.20, # нижние 20% = рубль нетипично силён
+    confirm_days   = 2,    # подряд идущих подтверждений
+)
+# Файл: src/indicators/log_return_percentile.py</div>
+
+<!-- ─── РАЗВИЛКА C2 vs C0 ─── -->
+<div class="page-break"></div>
+<h2>Ключевая развилка: c2 vs c0</h2>
+
+<p>Мы остановились перед принципиальным trade-off, который не имеет однозначного ответа
+на уровне статистики — только на уровне продуктового решения.</p>
+
+<div class="fork-box">
+  <div class="fork-title">⚖ Развилка: точность vs частота</div>
+  <div class="fork-cols">
+    <div class="fork-col">
+      <h4>c2 — наш выбор (confirm_days=2)</h4>
+      <table>
+        <tr><th>Метрика</th><th>KGS</th><th>TJS</th></tr>
+        <tr><td>Freq/нед</td><td>0.057</td><td>0.065</td></tr>
+        <tr><td>OOT Lift h=10</td><td>2.24×</td><td>2.13×</td></tr>
+        <tr><td>CI↓ 90% h=10</td><td class="pass">1.15</td><td class="pass">1.65</td></tr>
+        <tr><td>bps h=10</td><td>+64</td><td>+96</td></tr>
+        <tr><td>bps знак</td><td class="pass">✓ положит.</td><td class="pass">✓ положит.</td></tr>
+      </table>
+      <p style="font-size:9pt;">Плюс: статистически валиден, клиент реально экономит.<br>
+      Минус: <strong>1 сигнал раз в 2–3 месяца</strong> — в 15–30× реже таргета.</p>
+    </div>
+    <div class="fork-col">
+      <h4>c0 — альтернатива (confirm_days=0)</h4>
+      <table>
+        <tr><th>Метрика</th><th>KGS</th><th>TJS</th></tr>
+        <tr><td>Freq/нед</td><td>0.374</td><td>0.366</td></tr>
+        <tr><td>OOT Lift h=10</td><td>0.88×</td><td>1.22×</td></tr>
+        <tr><td>CI↓ 90% h=10</td><td class="fail">0.26</td><td class="fail">0.50</td></tr>
+        <tr><td>bps h=10</td><td>−12</td><td>+9</td></tr>
+        <tr><td>bps знак</td><td class="fail">✗ отриц.</td><td class="warn">≈0</td></tr>
+      </table>
+      <p style="font-size:9pt;">Плюс: в 6–7× чаще таргета по частоте.<br>
+      Минус: <strong>статистически не валиден, клиент теряет 5–23 bps</strong> на KGS.</p>
+    </div>
+  </div>
+  <div class="fork-verdict">
+    <strong>Почему c0 плохой экономически:</strong> без подтверждения сигнал приходит
+    в середине нисходящего тренда (рубль продолжает укрепляться после сигнала).
+    Клиент переводит, а завтра курс ещё лучше — он проиграл. c2 ловит локальное дно:
+    два дня нетипичного укрепления → откат вверх. Клиент переводит на дне.
+    <br><br>
+    <strong>Почему это развилка, а не однозначный ответ:</strong> продуктово 1 сигнал
+    в 10 недель — это почти нет продукта. Жюри может справедливо сказать, что
+    редкий надёжный сигнал лучше, чем частый ненадёжный. Или наоборот.
+    Мы выбрали c2 из-за честности перед клиентом: лучше не отправить, чем отправить невовремя.
+  </div>
+</div>
+
+<h3>Что ещё проверили для увеличения частоты (результат: не работает)</h3>
+
+<table>
+  <tr><th>Вариант</th><th>Freq/нед</th><th>CI↓ h=5 KGS</th><th>CI↓ h=5 TJS</th><th>Вердикт</th></tr>
+  <tr><td>c1 (confirm=1)</td><td>0.147–0.163</td><td class="fail">0.62</td><td class="pass">1.06</td><td>Работает только на TJS, KGS отваливается</td></tr>
+  <tr><td>t25 (threshold=0.25)</td><td>0.065–0.073</td><td class="pass">1.50</td><td class="pass">1.76</td><td>CI держится, но частота ≈ c2</td></tr>
+  <tr><td>t30 (threshold=0.30)</td><td>0.073–0.081</td><td class="pass">1.73</td><td class="pass">1.41</td><td>Лучший lift, но частота всё равно &lt; 0.10</td></tr>
+  <tr><td>w30 (window=30)</td><td>0.049–0.065</td><td class="pass">1.09</td><td class="pass">1.50</td><td>CI держится; KZT h=20 неожиданно ожил (N=2)</td></tr>
+</table>
+
+<p style="font-size:9pt; color:#555;">
+  Детальные результаты: <code>docs/experiments/frequency_increase_experiments.md</code>.
+  Сырые числа: <code>reports/validation/oot_validation_2026-09-04.json</code>.
+</p>
+
+<!-- ─── КЛЮЧЕВЫЕ ЧИСЛА ─── -->
+<div class="page-break"></div>
+<h2>Ключевые числа финального решения (c2)</h2>
+
+<div class="two">
+  <div class="col">
+    <div class="stat"><div class="val">2.1–2.5×</div><div class="lbl">OOT Lift над случайным днём (h=10)</div></div>
+    <div class="stat"><div class="val">+64–96 бп</div><div class="lbl">Экономия клиента h=10 (bps)</div></div>
+  </div>
+  <div class="col">
+    <div class="stat"><div class="val">CI &gt; 1.0</div><div class="lbl">90% bootstrap CI нижняя граница на KGS и TJS</div></div>
+    <div class="stat"><div class="val">N=7–8</div><div class="lbl">OOT сигналов на коридор за 14 мес.</div></div>
+  </div>
+</div>
+
+<table>
+  <tr><th>Коридор</th><th>h</th><th>IS Lift</th><th>OOT Lift</th><th>CI 90% ↓</th><th>bps</th><th>Статус</th></tr>
+  <tr class="hl"><td>KGS (сом)</td><td>5</td><td>2.10</td><td>1.84</td><td class="pass">1.36</td><td>+41</td><td><span class="badge bg">✓ Валид</span></td></tr>
+  <tr class="hl"><td>KGS (сом)</td><td>10</td><td>2.17</td><td>2.24</td><td class="pass">1.15</td><td>+64</td><td><span class="badge bg">✓ Валид</span></td></tr>
+  <tr class="hl"><td>TJS (сомони)</td><td>5</td><td>2.35</td><td>1.76</td><td class="pass">1.76</td><td>+69</td><td><span class="badge bg">✓ Валид</span></td></tr>
+  <tr class="hl"><td>TJS (сомони)</td><td>10</td><td>2.52</td><td>2.13</td><td class="pass">1.65</td><td>+96</td><td><span class="badge bg">✓ Валид</span></td></tr>
+  <tr><td>AMD (драм)</td><td>10</td><td>2.81</td><td>2.16</td><td class="pass">1.30</td><td>+52</td><td><span class="badge bb">✓ мало данных</span></td></tr>
+  <tr><td>UZS (сум)</td><td>—</td><td>—</td><td>—</td><td class="fail">&lt;1.0</td><td>—</td><td><span class="badge br">✗</span></td></tr>
+  <tr><td>KZT (тенге)</td><td>—</td><td>—</td><td>NaN</td><td class="fail">&lt;1.0</td><td>—</td><td><span class="badge br">✗ управляемый</span></td></tr>
+</table>
+
+<h3>Полные матрицы лифтов по всем горизонтам</h3>
+
+<div class="two">
+  <div class="col">
+    <h3>IS Lift</h3>
+    <table>
+      <tr><th>Коридор</th><th>h=1</th><th>h=3</th><th>h=5</th><th>h=10</th><th>h=20</th></tr>
+      <tr><td>KGS</td><td>1.20</td><td>1.73</td><td><b>2.10</b></td><td><b>2.17</b></td><td>1.49</td></tr>
+      <tr><td>TJS</td><td>1.41</td><td>1.95</td><td><b>2.35</b></td><td><b>2.52</b></td><td>2.38</td></tr>
+      <tr><td>AMD</td><td>1.22</td><td>1.76</td><td>2.16</td><td><b>2.81</b></td><td>1.23</td></tr>
+      <tr><td>UZS</td><td>1.21</td><td>1.44</td><td>1.41</td><td>1.90</td><td>1.23</td></tr>
+      <tr><td>KZT</td><td>0.82</td><td>1.14</td><td>1.49</td><td>1.01</td><td>1.39</td></tr>
+    </table>
+  </div>
+  <div class="col">
+    <h3>OOT Lift (честный)</h3>
+    <table>
+      <tr><th>Коридор</th><th>h=1</th><th>h=3</th><th>h=5</th><th>h=10</th><th>h=20</th></tr>
+      <tr><td>KGS</td><td>1.11</td><td>1.49</td><td><b>1.84</b></td><td><b>2.24</b></td><td>1.30</td></tr>
+      <tr><td>TJS</td><td>1.06</td><td>1.43</td><td><b>1.76</b></td><td><b>2.13</b></td><td>1.46</td></tr>
+      <tr><td>AMD</td><td>1.04</td><td>1.42</td><td>1.75</td><td><b>2.16</b></td><td>1.27</td></tr>
+      <tr><td>UZS</td><td>1.23</td><td>1.26</td><td>1.02</td><td>1.29</td><td>0.74</td></tr>
+      <tr><td>KZT</td><td class="fail">NaN</td><td class="fail">NaN</td><td class="fail">NaN</td><td class="fail">NaN</td><td class="fail">NaN</td></tr>
+    </table>
+  </div>
+</div>
+
+<table>
+  <tr><th>Коридор</th><th>CI↓ h=5</th><th>CI↓ h=10</th><th>CI↓ h=20</th><th>Интерпретация</th></tr>
+  <tr><td>KGS</td><td class="pass"><b>1.36</b></td><td class="pass"><b>1.15</b></td><td class="fail">0.00</td><td>CI &gt; 1.0 на 5 и 10 дней</td></tr>
+  <tr><td>TJS</td><td class="pass"><b>1.76</b></td><td class="pass"><b>1.65</b></td><td class="warn">0.99</td><td>Сильнейший CI из всех</td></tr>
+  <tr><td>AMD</td><td class="warn">0.99</td><td class="pass"><b>1.30</b></td><td class="fail">0.00</td><td>h=10 проходит, N мал</td></tr>
+  <tr><td>UZS</td><td class="fail">0.49</td><td class="fail">0.67</td><td class="fail">0.00</td><td>Не проходит ни один</td></tr>
+  <tr><td>KZT</td><td class="fail">0.00</td><td class="fail">0.00</td><td class="fail">0.00</td><td>Управляемый курс (NBK)</td></tr>
+</table>
+
+<p style="font-size:9pt; color:#555; margin-top:-10px;">
+  CI: circular block bootstrap, блоки 90 дней, 2000 resamples, 90% confidence.
+  Нижняя граница &gt; 1.0 → даже в пессимистичном сценарии lift выше случайного.
+</p>
+
+<!-- ─── LOOKAHEAD ─── -->
+<div class="page-break"></div>
+<h2>Защита от заглядывания в будущее</h2>
+
+<p>Это критическое требование. Проверяется по четырём независимым механизмам.</p>
+
+<div class="claim">
+  <div class="claim-label">Утверждение 1 — cutoff_date в каждом модуле</div>
+  Метод <code>compute(df, corridor, cutoff_date)</code> фильтрует данные строго
+  <code>&lt;= cutoff_date</code> в первой строке тела функции.
+  <div class="verify">Проверить: <code>src/indicators/log_return_percentile.py:41</code> —
+  вызов <code>self._filter(df, corridor, cutoff_date)</code>;
+  <code>src/indicators/base.py</code> — реализация <code>_filter()</code>.</div>
+</div>
+
+<div class="claim">
+  <div class="claim-label">Утверждение 2 — Walk-forward с embargo</div>
+  Каждое тестовое окно обучается на <code>[start, T−embargo]</code>,
+  тестируется на <code>[T, T+3мес]</code>. Embargo = 5 торговых дней.
+  <div class="verify">Проверить: <code>src/backtest/engine.py:152–193</code> —
+  цикл по test_start; строка <code>effective_test_start = test_start + timedelta(days=embargo_days)</code>.</div>
+</div>
+
+<div class="claim">
+  <div class="claim-label">Утверждение 3 — OOT split чистый</div>
+  Параметры (threshold=0.20, rank_window=60, confirm_days=2) зафиксированы
+  до 01.07.2025 и не менялись после. OOT данные никогда не использовались при выборе параметров.
+  <div class="verify">Проверить: <code>git log --all -p scripts/run_oot_validation.py</code> —
+  параметры индикатора не должны меняться в коммитах после первого запуска валидации.</div>
+</div>
+
+<div class="claim">
+  <div class="claim-label">Утверждение 4 — Unit-тесты на no-lookahead</div>
+  30 unit-тестов проходят, включая <code>test_no_lookahead.py</code> —
+  score на дату T не использует данные T+1.
+  <div class="verify">Запустить: <code>make test</code> → ожидается 30 passed, 0 failed.</div>
+</div>
+
+<!-- ─── ЧТО ОТВЕРГЛИ ─── -->
+<h2>Что проверили и отвергли</h2>
+
+<table>
+  <tr><th>Вариант</th><th>Результат</th><th>Почему не подходит</th></tr>
+  <tr><td>Percentile по уровню курса</td><td class="fail">Lift 0.91–0.97</td><td>Курс нестационарен (I(1)). Percentile по уровню теоретически некорректен — лучше случайного нет.</td></tr>
+  <tr><td>c0 (без подтверждения)</td><td class="fail">CI &lt; 1.0, bps &lt; 0</td><td>Сигнал приходит в середине тренда. Клиент теряет 5–23 bps vs случайного дня на KGS.</td></tr>
+  <tr><td>LightGBM поверх индикатора</td><td class="fail">OOT деградация</td><td>KGS: 1.60 → 1.42, TJS: 1.48 → 1.06. Переобучение на IS, не переносится на OOT.</td></tr>
+  <tr><td>RSI(14)</td><td class="fail">CI &lt; 1.0</td><td>Биржевой индикатор. Не работает на межбанковском курсе ЦБ (нет внутридневных данных, другая динамика).</td></tr>
+  <tr><td>Сезонность (calendar)</td><td class="fail">Lift 1.08, CI &lt; 1.0</td><td>Нет значимой недельной/месячной сезонности в log-returns коридоров СНГ.</td></tr>
+  <tr><td>c1/t25/t30/w30 (эксперименты частоты)</td><td class="warn">Частично</td><td>c1 работает только на TJS. t30 даёт лучший lift, но частота 0.08/нед — не решает задачу. Детали: <code>docs/experiments/frequency_increase_experiments.md</code>.</td></tr>
+</table>
+
+<!-- ─── ОГРАНИЧЕНИЯ ─── -->
+<h2>Честные ограничения</h2>
+
+<div class="lim">
+  <strong>1. Частота 0.057/нед = 1 раз в 2–3 месяца.</strong>
+  Цель кейса — 1–2/нед. Параметрические эксперименты (5 вариантов) подтвердили:
+  нет конфигурации, которая даёт ≥ 0.10/нед с CI &gt; 1.0 на KGS.
+  Это фундаментальный trade-off данного класса индикаторов на этих данных.
+</div>
+
+<div class="lim">
+  <strong>2. N=4–8 OOT сигналов на коридор.</strong>
+  OOT период — 14 месяцев (01.07.2025–05.09.2026). При частоте 0.057/нед это ~3–4 события на коридор.
+  CI bootstrap технически корректен, но на малых N — широкий. Нужен живой пилот.
+</div>
+
+<div class="lim">
+  <strong>3. Курс ЦБ ≠ курс исполнения.</strong>
+  Бэктест считается по курсам ЦБ. В приложении курс привязан к поставщикам ликвидности.
+  Разница 10–50 bps возможна. Реальная экономия в пилоте может отличаться.
+</div>
+
+<div class="lim">
+  <strong>4. KZT и UZS не работают.</strong>
+  KZT — управляемый курс (NBK interventions), нет sharp strengthening episodes → 0 OOT сигналов.
+  UZS — lift есть, CI не проходит.
+</div>
+
+<!-- ─── ЧЕКЛИСТ ─── -->
+<div class="page-break"></div>
+<h2>Чеклист для ревью (для людей и LLM)</h2>
+
+<p>Каждый пункт — конкретная проверка с указанием файла и строки.</p>
+
+<ul class="check">
+  <li>
+    <strong>Нет lookahead в индикаторе:</strong>
+    <code>src/indicators/log_return_percentile.py:41</code> —
+    первая строка <code>compute()</code> вызывает <code>self._filter(df, corridor, cutoff_date)</code>.
+    Весь расчёт после этой строки работает только на отфильтрованных данных.
+  </li>
+  <li>
+    <strong>Pathwise hit definition:</strong>
+    <code>src/backtest/metrics.py</code> — функция <code>hit_rate_at_h()</code>.
+    Проверить: берётся <code>min(future_slice)</code>, а не <code>future_slice[-1]</code>.
+    Иначе lift завышен — клиент «выиграл» только если курс хоть раз был лучше, а не в конце.
+  </li>
+  <li>
+    <strong>bps формула:</strong>
+    <code>src/backtest/metrics.py</code> — функция <code>bps_by_horizon()</code>.
+    Формула: <code>(mean(rate[t+1..t+h]) − rate[t]) / rate[t] × 10 000</code>.
+    Положительное = день сигнала <em>дешевле</em> среднего курса в следующие h дней.
+    Отрицательное = клиент переплатил. Проверить знак для c2 (ожидаем +) и c0 (ожидаем −).
+  </li>
+  <li>
+    <strong>Lift baseline:</strong>
+    <code>src/backtest/metrics.py</code> — функция <code>lift_over_random()</code>.
+    Baseline = hit rate случайного дня на том же торговом календаре.
+    Проверить: baseline не считается на всём ряду, а только на trading days тестового окна.
+  </li>
+  <li>
+    <strong>CI bootstrap параметры:</strong>
+    <code>src/backtest/metrics.py</code> — функция <code>lift_confidence_interval()</code>.
+    Параметры: блоки 90 дней, circular, 2000 resamples, 90% confidence.
+    Проверить: блоки не перекрываются с IS при circular resample.
+  </li>
+  <li>
+    <strong>OOT split чистый:</strong>
+    <code>src/backtest/engine.py</code> — константа <code>OOT_START</code>.
+    Должна быть = <code>2025-07-01</code>. Параметры индикатора в
+    <code>scripts/run_oot_validation.py</code> не менялись после этой даты
+    (<code>git log</code> для проверки).
+  </li>
+  <li>
+    <strong>Compliance push-текстов:</strong>
+    <code>src/texts/templates.py</code> — запрещённые паттерны («скоро», «успейте», «гарантируем»,
+    «вырастет», «заработайте») должны триггерить исключение при генерации push-текста.
+  </li>
+  <li>
+    <strong>Тесты проходят:</strong> запустить <code>make test</code> → ожидается 30 passed, 0 failed.
+  </li>
+</ul>
+
+<!-- ─── ВОСПРОИЗВЕДЕНИЕ ─── -->
+<h2>Воспроизвести результаты</h2>
+
+<div class="code">git clone https://github.com/davadevi/fx-signal-layer.git
+cd fx-signal-layer
+pip install -r requirements.txt
+
+# Данные
+python -m src.data.download
+python -m src.data.normalize
+
+# Воспроизвести главный результат (~15 мин)
+PYTHONPATH=. python scripts/run_oot_validation.py
+# → reports/validation/oot_validation_{date}.json
+
+# Тесты
+make test   # ожидается: 30 passed
+
+# Сигналы на сегодня
+PYTHONPATH=. python -m src.pipeline.run --cutoff-date $(date +%Y-%m-%d)</div>
+
+<h3>Файловая карта</h3>
+<table>
+  <tr><th>Файл</th><th>Что там</th></tr>
+  <tr><td><code>src/indicators/log_return_percentile.py</code></td><td>Основной индикатор — весь расчёт</td></tr>
+  <tr><td><code>src/backtest/engine.py</code></td><td>Walk-forward движок, BacktestResult, OOT_START</td></tr>
+  <tr><td><code>src/backtest/metrics.py</code></td><td>hit_rate, lift, CI bootstrap, bps_by_horizon</td></tr>
+  <tr><td><code>src/pipeline/signals.py</code></td><td>generate_signals(), cooldown, compliance filter</td></tr>
+  <tr><td><code>src/texts/templates.py</code></td><td>Push-тексты + compliance validator</td></tr>
+  <tr><td><code>scripts/run_oot_validation.py</code></td><td>Скрипт воспроизведения + c0 сравнение</td></tr>
+  <tr><td><code>reports/validation/oot_validation_2026-09-04.json</code></td><td>Сырые числа (c2, c0, c1, t25, t30, w30)</td></tr>
+  <tr><td><code>docs/experiments/frequency_increase_experiments.md</code></td><td>Параметрические эксперименты по частоте</td></tr>
+  <tr><td><code>tests/unit/test_no_lookahead.py</code></td><td>Unit-тесты на отсутствие lookahead</td></tr>
+</table>
+
+<div class="footer">
+  FX Signal Layer · Alfa-Bank Hackathon · 05.09.2026 ·
+  Числа: reports/validation/oot_validation_2026-09-04.json ·
+  Для вопросов: /review или открыть issue в репо
+</div>
+
+</div>
+</body>
+</html>"""
+
+if __name__ == "__main__":
+    from pathlib import Path
+
+    out_dir = Path("reports/review")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    html_path = out_dir / "fx_signal_layer_review.html"
+    pdf_path  = out_dir / "fx_signal_layer_review.pdf"
+
+    html_path.write_text(HTML, encoding="utf-8")
+    print(f"HTML → {html_path}")
+
+    try:
+        from weasyprint import HTML as WP
+        WP(string=HTML, base_url=".").write_pdf(str(pdf_path))
+        print(f"PDF  → {pdf_path}")
+    except Exception as e:
+        print(f"weasyprint error: {e}")

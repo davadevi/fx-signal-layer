@@ -2,18 +2,33 @@
 
 ## src/data
 
+Реализовано: `src/data/download.py`
+
 ```python
-def load_rates(
-    corridors: list[str],
-    start_date: date,
-    end_date: date,
+def download_rates(
+    start: str = "2020-01-01",
+    cutoff_date: date | None = None,
 ) -> pd.DataFrame:
     """
-    Returns DataFrame: [date, corridor, rate_normalized, is_trading_day]
-    Corridors: "RUB_TJS", "RUB_UZS", "RUB_KGS", "RUB_AMD", "RUB_KZT"
-    Weekend gaps forward-filled. rate_normalized = rate / nominal.
+    Скачивает курсы ЦБ РФ для всех 8 коридоров (TJS/UZS/KGS/AMD/KZT + USD/EUR/CNY).
+    Возвращает DataFrame: [date, corridor, rate, is_trading_day]
+      - date: datetime64[ns]
+      - corridor: "RUB_TJS" | "RUB_UZS" | "RUB_KGS" | "RUB_AMD" | "RUB_KZT" | "RUB_USD" | "RUB_EUR" | "RUB_CNY"
+      - rate: float — VunitRate из XML ЦБ (рублей за 1 единицу валюты)
+      - is_trading_day: bool — False для выходных/праздников (forward-fill из предыдущего торгового дня)
+    cutoff_date: если передан — строки после cutoff_date отбрасываются (no-lookahead).
     """
+
+def save_rates(
+    df: pd.DataFrame,
+    path: str = "data/processed/rates.parquet",
+) -> None:
+    """Сохраняет DataFrame в parquet, создаёт директории при необходимости."""
 ```
+
+**Источник данных:** `https://www.cbr.ru/scripts/XML_dynamic.asp`  
+**Ключевое поле:** `VunitRate` — нормализован ЦБ к 1 единице валюты, устойчив к изменениям номинала.  
+**CLI:** `python -m src.data.download` — скачивает и сохраняет `data/processed/rates.parquet`.
 
 ## src/indicators
 

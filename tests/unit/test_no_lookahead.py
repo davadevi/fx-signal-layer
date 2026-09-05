@@ -10,7 +10,7 @@ from src.indicators.base import BaseIndicator
 def make_df(n_days: int = 100) -> pd.DataFrame:
     dates = pd.date_range("2020-01-01", periods=n_days, freq="D")
     return pd.DataFrame({
-        "date": dates.date,
+        "date": dates,
         "corridor": "RUB_TJS",
         "rate_normalized": range(n_days),
         "is_trading_day": True,
@@ -37,7 +37,7 @@ class CleanIndicator(BaseIndicator):
 
 def test_clean_indicator_respects_cutoff():
     df = make_df(100)
-    cutoff = date(2020, 03, 10)
+    cutoff = pd.Timestamp(date(2020, 3, 10))
     ind = CleanIndicator()
     scores = ind.compute(df, "RUB_TJS", cutoff)
     assert all(d <= cutoff for d in scores.index), "Future dates in scores"
@@ -45,7 +45,7 @@ def test_clean_indicator_respects_cutoff():
 
 def test_leaky_indicator_violates_cutoff():
     df = make_df(100)
-    cutoff = date(2020, 03, 10)
+    cutoff = pd.Timestamp(date(2020, 3, 10))
     ind = LeakyIndicator()
     scores = ind.compute(df, "RUB_TJS", cutoff)
     # This should fail — demonstrates why _filter must be used
