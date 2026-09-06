@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111111">
+  <meta name="description" content="Симулятор push-уведомлений о валютном курсе">
+  <title>Симулятор пушей — Альфа</title>
+  <link rel="stylesheet" href="push-simulator.css">
+</head>
+<body>
+  <header class="sim-nav">
+    <a class="sim-brand" href="index.html" aria-label="Вернуться в приложение"><span>A</span><b>АЛЬФА</b></a>
+    <nav class="sim-nav-links"><a href="timeline-demo.html">Демо периода</a><a class="back-link" href="index.html"><i>←</i> В приложение</a></nav>
+  </header>
+
+  <main class="sim-layout">
+    <section class="control-panel">
+      <div class="panel-heading">
+        <span class="mode-badge"><i></i> Shadow mode</span>
+        <h1>Симулятор<br>пуш-уведомлений</h1>
+        <p>Проверьте текст, коммуникационные ограничения и экран после открытия пуша.</p>
+      </div>
+
+      <section class="control-section">
+        <div class="section-title"><span>01</span><h2>Валюта перевода</h2></div>
+        <div class="currency-tabs" id="currency-tabs" role="tablist" aria-label="Валюта"></div>
+      </section>
+
+      <section class="control-section">
+        <div class="section-title"><span>02</span><h2>Сценарий наблюдения</h2></div>
+        <div class="scenario-list">
+          <label class="scenario-card is-selected">
+            <input type="radio" name="scenario" value="favorable" checked>
+            <span class="scenario-radio"></span>
+            <span><strong>Ниже среднего</strong><small>Курс сейчас ниже среднего уровня за 30 дней</small></span>
+          </label>
+          <label class="scenario-card">
+            <input type="radio" name="scenario" value="movement">
+            <span class="scenario-radio"></span>
+            <span><strong>Заметное движение</strong><small>Валюта росла к рублю несколько публикаций</small></span>
+          </label>
+          <label class="scenario-card">
+            <input type="radio" name="scenario" value="neutral">
+            <span class="scenario-radio"></span>
+            <span><strong>Нет сигнала</strong><small>Проверка корректного молчания системы</small></span>
+          </label>
+        </div>
+        <div class="field-grid">
+          <label class="field"><span>Справочный курс</span><div><input id="rate-input" inputmode="decimal" value="0,9920"><b>₽</b></div></label>
+          <label class="field"><span id="delta-label">Ниже среднего на</span><div><input id="delta-input" inputmode="decimal" value="2,1"><b>%</b></div></label>
+        </div>
+        <p class="synthetic-note"><span>i</span> Значения в симуляторе тестовые. В продукте сюда поступают факты из сигнального слоя.</p>
+      </section>
+
+      <section class="control-section">
+        <div class="section-title"><span>03</span><h2>Политика отправки</h2></div>
+        <div class="policy-grid">
+          <label class="field field--time"><span>Время события</span><input id="time-input" type="time" value="20:15"></label>
+          <label class="field"><span>Уже отправлено за 7 дней</span><select id="sent-count"><option value="0">0 пушей</option><option value="1">1 пуш</option><option value="2">2 пуша</option></select></label>
+        </div>
+        <label class="switch-row"><span><strong>Тихие часы</strong><small>Не доставлять с 22:00 до 09:00</small></span><input id="quiet-hours" type="checkbox" checked><i></i></label>
+      </section>
+
+      <section class="copy-preview" aria-live="polite">
+        <div class="copy-preview__top"><span>Текст сообщения</span><span id="copy-length">0 / 180</span></div>
+        <h3 id="preview-title">Справочный курс KGS снизился</h3>
+        <p id="preview-body"></p>
+        <div class="checks"><span>✓ Только факты</span><span>✓ Без прогноза</span><span>✓ Актуальный курс в приложении</span></div>
+      </section>
+
+      <div class="action-row">
+        <button class="run-button" id="run-simulation"><span>Запустить симуляцию</span><i>→</i></button>
+        <button class="reset-button" id="reset-simulation" aria-label="Сбросить симуляцию">↺</button>
+      </div>
+
+      <section class="delivery-result" id="delivery-result" hidden aria-live="assertive">
+        <span class="result-icon" id="result-icon">✓</span>
+        <div><strong id="result-title">Пуш доставлен</strong><p id="result-copy">Лимиты соблюдены, уведомление появилось на экране.</p></div>
+      </section>
+
+      <section class="event-log">
+        <div class="event-log__head"><h2>Журнал симуляции</h2><span id="event-count">0 событий</span></div>
+        <div class="event-list" id="event-list"><p class="empty-log">Здесь появятся результаты запусков</p></div>
+      </section>
+    </section>
+
+    <aside class="preview-stage" aria-label="Предпросмотр телефона">
+      <div class="stage-copy"><span>LIVE PREVIEW</span><p>Нажмите на пуш, чтобы проверить deep link</p></div>
+      <div class="phone" id="phone">
+        <div class="phone-island"></div>
+
+        <section class="lock-screen" id="lock-screen">
+          <div class="wallpaper"><div class="orb orb--one"></div><div class="orb orb--two"></div><div class="orb orb--three"></div></div>
+          <div class="phone-status"><span id="phone-status-time">20:15</span><span>▮▮▮ 5G ▰</span></div>
+          <div class="lock-clock"><span>пятница, 4 сентября</span><strong id="lock-time">20:15</strong></div>
+          <div class="notification-zone">
+            <button class="push-card" id="push-card" hidden>
+              <div class="push-head"><span class="push-app-icon">A</span><b>АЛЬФА-БАНК</b><time>сейчас</time></div>
+              <strong id="push-title">Справочный курс KGS снизился</strong>
+              <p id="push-body"></p>
+              <span class="open-hint">Нажмите, чтобы открыть</span>
+            </button>
+            <div class="waiting-state" id="waiting-state"><span>↑</span><p>Настройте сценарий<br>и запустите симуляцию</p></div>
+          </div>
+          <div class="lock-actions"><span>⌁</span><span>◉</span></div>
+          <div class="home-indicator"></div>
+        </section>
+
+        <section class="deeplink-screen" id="deeplink-screen" hidden>
+          <div class="app-status"><span id="app-status-time">20:15</span><span>▮▮▮ 5G ▰</span></div>
+          <header class="app-header"><button id="back-to-lock" aria-label="Назад">‹</button><strong>Курс валюты</strong><button>•••</button></header>
+          <div class="app-content">
+            <div class="app-currency"><span id="deep-flag">🇰🇬</span><b id="deep-code">KGS</b><small id="deep-country">Кыргызстан</small></div>
+            <p>Справочный курс ЦБ</p>
+            <div class="deep-rate"><strong id="deep-rate">0,9920</strong><span>₽</span></div>
+            <div class="deep-delta" id="deep-delta">↓ 2,1% к среднему за 30 дней</div>
+            <div class="deep-chart">
+              <svg viewBox="0 0 300 130" preserveAspectRatio="none" aria-hidden="true">
+                <defs><linearGradient id="deep-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ef3124" stop-opacity=".24"/><stop offset="1" stop-color="#ef3124" stop-opacity="0"/></linearGradient></defs>
+                <path class="deep-grid" d="M0 24H300M0 65H300M0 106H300"/>
+                <path class="deep-area" id="deep-area" d="M0 35L50 43L100 39L150 64L200 70L250 91L300 104L300 130L0 130Z"/>
+                <path class="deep-line" id="deep-line" d="M0 35L50 43L100 39L150 64L200 70L250 91L300 104"/>
+              </svg>
+              <div><span>30 дней назад</span><span>Сегодня</span></div>
+            </div>
+            <article class="deep-observation"><span>↘</span><div><small>НАБЛЮДЕНИЕ</small><strong id="deep-observation-title">Ниже среднего</strong><p id="deep-observation-copy">Справочный курс сейчас ниже среднего уровня за 30 дней.</p></div></article>
+            <p class="deep-disclaimer">Это наблюдение о прошлом и настоящем, а не прогноз курса.</p>
+            <a class="deep-cta" href="index.html#transfer">Перейти к переводу</a>
+          </div>
+          <div class="home-indicator home-indicator--dark"></div>
+        </section>
+      </div>
+      <div class="preview-legend"><span><i class="legend-dot"></i> Интерактивный экран</span><span>390 × 844</span></div>
+    </aside>
+  </main>
+
+  <script src="push-simulator.js"></script>
+</body>
+</html>

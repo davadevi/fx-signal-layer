@@ -107,6 +107,7 @@ tests/unit/        # unit tests per module
 tests/integration/ # end-to-end signal generation tests
 notebooks/         # EDA only — no production code in notebooks
 reports/           # backtest results (JSON + plots)
+ui/                # static interactive prototype and timeline data exporter
 docs/decisions/    # ADR files
 docs/api/          # module interface specs
 ```
