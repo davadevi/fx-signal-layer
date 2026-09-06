@@ -28,3 +28,6 @@ reports/*.html
 .venv/
 venv/
 .DS_Store
+
+# Generated
+graphify-out/

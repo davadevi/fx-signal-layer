@@ -134,9 +134,11 @@ CBR XML API: `https://www.cbr.ru/scripts/XML_dynamic.asp` — поле `VunitRat
 
 ### Результаты по горизонтам (log_ret_c2) — IS и OOT
 
+> **Примечание по N:** столбец `N (IS+OOT)` = число сигналов за весь backtest-период (2022-04-01 — 2026-09-04), используется для bootstrap CI. Реальные сигналы строго в OOT-окне (2025-07-01+): KGS=3, TJS=3, UZS=5, AMD=3, KZT=0 — CI на таком N неустойчив, поэтому CI считается на полной выборке (ограничение задокументировано).
+
 #### KGS (кыргызский сом)
 
-| h | IS Lift | OOT Lift | CI 90% ↓ | CI 90% ↑ | N (OOT) | Freq/нед |
+| h | IS Lift | OOT Lift | CI 90% ↓ | CI 90% ↑ | N (IS+OOT) | Freq/нед |
 |---|---------|----------|-----------|-----------|---------|----------|
 | 1 | 1.200 | 1.113 | NaN | NaN | 7 | 0.057 |
 | 3 | 1.734 | 1.493 | NaN | NaN | 7 | 0.057 |
@@ -146,7 +148,7 @@ CBR XML API: `https://www.cbr.ru/scripts/XML_dynamic.asp` — поле `VunitRat
 
 #### TJS (таджикский сомони)
 
-| h | IS Lift | OOT Lift | CI 90% ↓ | CI 90% ↑ | N (OOT) | Freq/нед |
+| h | IS Lift | OOT Lift | CI 90% ↓ | CI 90% ↑ | N (IS+OOT) | Freq/нед |
 |---|---------|----------|-----------|-----------|---------|----------|
 | 1 | 1.406 | 1.059 | NaN | NaN | 8 | 0.065 |
 | 3 | 1.952 | 1.432 | NaN | NaN | 8 | 0.065 |
@@ -156,7 +158,7 @@ CBR XML API: `https://www.cbr.ru/scripts/XML_dynamic.asp` — поле `VunitRat
 
 #### AMD (армянский драм)
 
-| h | IS Lift | OOT Lift | CI 90% ↓ | CI 90% ↑ | N (OOT) | Freq/нед |
+| h | IS Lift | OOT Lift | CI 90% ↓ | CI 90% ↑ | N (IS+OOT) | Freq/нед |
 |---|---------|----------|-----------|-----------|---------|----------|
 | 1 | 1.223 | 1.040 | NaN | NaN | 4 | 0.033 |
 | 3 | 1.759 | 1.420 | NaN | NaN | 4 | 0.033 |
@@ -322,7 +324,7 @@ ML-слой в финальный pipeline не включён (деградир
 | statsmodels | 0.14+ (ADF) |
 | ruptures | 1.1+ (PELT) |
 | pytest | 8.x |
-| Объём кода (src/) | ~2 300 строк |
+| Объём кода (src/) | ~2 260 строк |
 | Число unit-тестов | 30 |
 | Число ADR | 6 |
 | Размер rates.parquet | ~450 KB |
