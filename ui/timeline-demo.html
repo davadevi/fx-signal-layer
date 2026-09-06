@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f4f1">
+  <meta name="description" content="Историческая демонстрация валютного графика и push-уведомлений">
+  <title>Демонстрация периода — Альфа</title>
+  <link rel="stylesheet" href="timeline-demo.css">
+</head>
+<body>
+  <header class="timeline-nav">
+    <a class="timeline-brand" href="index.html"><span>A</span><b>АЛЬФА</b></a>
+    <nav>
+      <a href="push-simulator.html">Конструктор пушей</a>
+      <a href="index.html">В приложение <i>→</i></a>
+    </nav>
+  </header>
+
+  <main class="timeline-page">
+    <section class="timeline-main">
+      <header class="hero-copy">
+        <span class="eyebrow"><i></i> Историческая симуляция</span>
+        <h1>Курс и уведомления<br>в одном времени</h1>
+        <p>Выберите период и запустите воспроизведение. График строится последовательно, а моменты отправки отмечаются одновременно на линии и на экране телефона.</p>
+      </header>
+
+      <section class="timeline-controls" aria-label="Параметры демонстрации">
+        <div class="currency-control">
+          <span>Валюта</span>
+          <div id="timeline-currencies" class="currency-pills" role="tablist"></div>
+        </div>
+        <div class="date-controls">
+          <label><span>Начало периода</span><input id="start-date" type="date" value="2026-04-01"></label>
+          <span class="date-arrow">→</span>
+          <label><span>Конец периода</span><input id="end-date" type="date" value="2026-06-20"></label>
+          <button class="example-button" id="signal-example">Период с сигналами</button>
+        </div>
+      </section>
+
+      <section class="chart-panel">
+        <div class="chart-head">
+          <div>
+            <span class="chart-label">RUB / <b id="chart-code">KGS</b></span>
+            <strong><span id="current-rate">—</span> ₽</strong>
+            <small id="current-date">Выберите период</small>
+          </div>
+          <div class="chart-stats">
+            <span><small>Изменение периода</small><b id="period-change">—</b></span>
+            <span><small>Отправлено пушей</small><b id="push-count">0</b></span>
+          </div>
+        </div>
+
+        <div class="chart-wrap" id="chart-wrap">
+          <canvas id="timeline-chart" role="img" aria-label="График справочного курса и моменты отправки уведомлений"></canvas>
+          <div class="chart-loading" id="chart-loading"><span></span><p>Загружаем исторические данные…</p></div>
+          <div class="marker-legend"><span><i></i> Момент отправки</span><span><b></b> Текущая дата</span></div>
+        </div>
+
+        <div class="playback-row">
+          <button class="round-control" id="reset-playback" aria-label="Вернуться в начало">↺</button>
+          <button class="play-control" id="play-button"><span id="play-icon">▶</span><b id="play-label">Запустить</b></button>
+          <button class="round-control" id="step-playback" aria-label="Следующая дата">›</button>
+          <label class="scrubber-label">
+            <input id="timeline-scrubber" type="range" min="0" max="100" value="0">
+            <span><b id="progress-label">0%</b><small id="point-progress">0 / 0 дат</small></span>
+          </label>
+          <label class="speed-select"><span>Скорость</span><select id="playback-speed"><option value="320">1×</option><option value="130" selected>3×</option><option value="48">8×</option><option value="18">20×</option></select></label>
+        </div>
+      </section>
+
+      <section class="rule-explainer">
+        <div class="rule-number">01</div>
+        <div><span>ДЕМОНСТРАЦИОННОЕ ПРАВИЛО</span><h2>Справочный курс на 1% ниже среднего за 30 публикаций</h2><p>После отправки действует cooldown 7 календарных дней. Правило используется только для визуальной демонстрации и не является рекомендацией к запуску.</p></div>
+        <div class="rule-state"><i></i><span>Shadow</span></div>
+      </section>
+
+      <section class="events-panel">
+        <div class="events-head"><div><span>События периода</span><h2>Отправленные уведомления</h2></div><b id="events-badge">0 событий</b></div>
+        <div class="events-table" id="events-table">
+          <div class="events-empty"><span>↗</span><p>Запустите воспроизведение — здесь появятся моменты отправки.</p></div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="phone-column">
+      <div class="phone-caption"><span>ТЕЛЕФОН КЛИЕНТА</span><p id="phone-caption-status">Ожидает событий</p></div>
+      <div class="timeline-phone">
+        <div class="phone-island"></div>
+        <div class="phone-wallpaper"><i></i><i></i><i></i></div>
+        <div class="phone-status"><span id="phone-status-time">12:00</span><span>▮▮▮ 5G ▰</span></div>
+        <div class="phone-clock"><span id="phone-weekday">среда, 1 апреля</span><strong>12:00</strong></div>
+        <div class="phone-date-progress"><i id="phone-progress-bar"></i></div>
+        <div class="phone-notifications" id="phone-notifications">
+          <div class="phone-empty" id="phone-empty"><span>🔔</span><p>Уведомления появятся<br>во время воспроизведения</p></div>
+        </div>
+        <div class="phone-footer"><button>⌁</button><span id="phone-day-counter">День 1</span><button>◉</button></div>
+        <div class="phone-home-indicator"></div>
+      </div>
+      <div class="phone-summary">
+        <div><span class="live-dot"></span><p><strong id="phone-currency">KGS · Кыргызстан</strong><small>Справочный курс ЦБ</small></p></div>
+        <span id="phone-event-total">0 уведомлений</span>
+      </div>
+    </aside>
+  </main>
+
+  <template id="phone-notification-template">
+    <article class="timeline-push">
+      <header><span class="push-icon">A</span><b>АЛЬФА-БАНК</b><time>сейчас</time></header>
+      <strong class="push-title"></strong>
+      <p class="push-copy"></p>
+    </article>
+  </template>
+
+  <script src="timeline-demo.js"></script>
+</body>
+</html>
