@@ -20,6 +20,7 @@ from src.backtest.metrics import (
     base_rate_at_h,
     base_rate_at_h_below_avg,
     bps_by_horizon,
+    bps_by_horizon_symmetric,
     clustering_score,
     cost_of_waiting_bps,
     hit_rate_at_h,
@@ -44,8 +45,10 @@ class BacktestResult:
     lift: dict[int, float]               # definition A lift
     hit_rate_b: dict[int, float]         # definition B: rate[t] < mean future
     lift_b: dict[int, float]             # definition B lift
-    lift_ci_low: dict[int, float]        # 95% CI lower (definition A)
-    lift_ci_high: dict[int, float]       # 95% CI upper (definition A)
+    lift_ci_low: dict[int, float]        # 90% CI lower (definition A, full period)
+    lift_ci_high: dict[int, float]       # 90% CI upper (definition A, full period)
+    lift_ci_low_oot: dict[int, float]    # 90% CI lower (definition A, OOT only)
+    lift_ci_high_oot: dict[int, float]   # 90% CI upper (definition A, OOT only)
     out_of_time_lift: dict[int, float]
     out_of_time_lift_b: dict[int, float]
     signal_count: int
@@ -53,6 +56,7 @@ class BacktestResult:
     clustering_score: float
     cost_of_waiting_bps: float
     bps_by_horizon: dict[int, float]
+    bps_by_horizon_symmetric: dict[int, float]
     n_test_windows: int
     base_rate: dict[int, float]
     base_rate_b: dict[int, float]
@@ -70,6 +74,8 @@ class BacktestResult:
             "lift_b": _d(self.lift_b),
             "lift_ci_low": _d(self.lift_ci_low),
             "lift_ci_high": _d(self.lift_ci_high),
+            "lift_ci_low_oot": _d(self.lift_ci_low_oot),
+            "lift_ci_high_oot": _d(self.lift_ci_high_oot),
             "out_of_time_lift": _d(self.out_of_time_lift),
             "out_of_time_lift_b": _d(self.out_of_time_lift_b),
             "signal_count": self.signal_count,
@@ -77,6 +83,7 @@ class BacktestResult:
             "clustering_score": self.clustering_score,
             "cost_of_waiting_bps": self.cost_of_waiting_bps,
             "bps_by_horizon": _d(self.bps_by_horizon),
+            "bps_by_horizon_symmetric": _d(self.bps_by_horizon_symmetric),
             "n_test_windows": self.n_test_windows,
             "base_rate": _d(self.base_rate),
             "base_rate_b": _d(self.base_rate_b),
@@ -132,9 +139,8 @@ def run_walkforward(
         raise ValueError(f"No data for corridor {corridor}")
 
     corridor_df = df[df["corridor"] == corridor].copy()
-    max_h = max(horizons)
     data_end = corridor_df["date"].max().date()
-    last_test_end = data_end - timedelta(days=max_h)
+    last_test_end = data_end - timedelta(days=min(horizons))
 
     direction = _signal_direction(indicator)
     threshold = getattr(indicator, "threshold", 0.5)
@@ -212,7 +218,8 @@ def run_walkforward(
         for h in horizons:
             if h in ci_hs:
                 lo, hi = lift_confidence_interval(
-                    all_signals, rates_full, trading_idx, h, definition="A"
+                    all_signals, rates_full, trading_idx, h,
+                    definition="A", confidence_level=0.90,
                 )
                 lift_ci_low[h] = lo
                 lift_ci_high[h] = hi
@@ -222,6 +229,24 @@ def run_walkforward(
     else:
         lift_ci_low = {h: float("nan") for h in horizons}
         lift_ci_high = {h: float("nan") for h in horizons}
+
+    lift_ci_low_oot: dict[int, float] = {}
+    lift_ci_high_oot: dict[int, float] = {}
+    if compute_ci and oot_signals:
+        for h in horizons:
+            if h in ci_hs:
+                lo, hi = lift_confidence_interval(
+                    oot_signals, rates_full, oot_idx, h,
+                    definition="A", confidence_level=0.90,
+                )
+                lift_ci_low_oot[h] = lo
+                lift_ci_high_oot[h] = hi
+            else:
+                lift_ci_low_oot[h] = float("nan")
+                lift_ci_high_oot[h] = float("nan")
+    else:
+        lift_ci_low_oot = {h: float("nan") for h in horizons}
+        lift_ci_high_oot = {h: float("nan") for h in horizons}
 
     # signals per week: over the total test period
     if all_trading_days:
@@ -240,6 +265,8 @@ def run_walkforward(
         lift_b=lift_b,
         lift_ci_low=lift_ci_low,
         lift_ci_high=lift_ci_high,
+        lift_ci_low_oot=lift_ci_low_oot,
+        lift_ci_high_oot=lift_ci_high_oot,
         out_of_time_lift=oot_lift,
         out_of_time_lift_b=oot_lift_b,
         signal_count=len(all_signals),
@@ -247,6 +274,7 @@ def run_walkforward(
         clustering_score=clustering_score(all_signals),
         cost_of_waiting_bps=cost_of_waiting_bps(all_signals, rates_full),
         bps_by_horizon=bps_by_horizon(all_signals, rates_full, horizons),
+        bps_by_horizon_symmetric=bps_by_horizon_symmetric(all_signals, rates_full, horizons),
         n_test_windows=n_windows,
         base_rate=base_rate,
         base_rate_b=base_rate_b,

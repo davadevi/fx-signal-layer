@@ -49,15 +49,15 @@ def generate_signals(
     cooldown_days: int = 3,
     max_signals: int = 2,
     require_rsi: bool = False,
-    signal_history: list[date] | None = None,
+    signal_history: dict[str, list[date]] | None = None,
 ) -> list[Signal]:
     """Generate favorable-rate signals for a single cutoff_date.
 
     Only data with date <= cutoff_date is used. Signals in a crisis volatility
     regime are suppressed. Result is capped at max_signals per call.
 
-    signal_history: previous signal dates for cross-call cooldown. Caller must
-        persist and pass this on each invocation.
+    signal_history: per-corridor previous signal dates for cross-call cooldown.
+        Keyed by corridor. Caller must persist and pass this on each invocation.
     """
     if df is None:
         df = pd.read_parquet(DATA_PATH)
@@ -129,15 +129,18 @@ def generate_signals(
             )
         )
 
-    history: list[date] = list(signal_history) if signal_history else []
+    history_map: dict[str, list[date]] = (
+        {c: list(v) for c, v in signal_history.items()} if signal_history else {}
+    )
 
     kept: list[Signal] = []
     candidates.sort(key=lambda s: s.strength, reverse=True)
     for s in candidates:
-        if any(abs((s.date - h).days) < cooldown_days for h in history):
+        corr_hist = history_map.get(s.corridor, [])
+        if any(abs((s.date - h).days) < cooldown_days for h in corr_hist):
             continue
         kept.append(s)
-        history.append(s.date)
+        history_map.setdefault(s.corridor, []).append(s.date)
         if len(kept) >= max_signals:
             break
 

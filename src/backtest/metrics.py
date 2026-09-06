@@ -210,7 +210,7 @@ def lift_confidence_interval(
     trading_days: pd.DatetimeIndex,
     h: int,
     n_resamples: int = 2000,
-    confidence_level: float = 0.95,
+    confidence_level: float = 0.90,
     definition: str = "A",
     block_days: int = 90,
 ) -> tuple[float, float]:
@@ -318,6 +318,41 @@ def bps_by_horizon(
                 continue
             r_future_mean = float(future.dropna().mean())
             diffs.append((r_future_mean - r_t) / r_t * 10_000)
+        result[h] = float(np.mean(diffs)) if diffs else float("nan")
+    return result
+
+
+def bps_by_horizon_symmetric(
+    signals: list[date],
+    rates: pd.Series,
+    horizons: list[int],
+) -> dict[int, float]:
+    """Average bps vs surrounding ±h window (case definition).
+
+    bps(t, h) = (mean(rate[t-h..t-1, t+1..t+h]) - rate[t]) / rate[t] * 10_000
+    Positive = signal day cheaper than surrounding window average.
+    """
+    if not signals or rates.empty:
+        return {h: float("nan") for h in horizons}
+    result: dict[int, float] = {}
+    max_date = rates.index.max()
+    for h in horizons:
+        diffs: list[float] = []
+        for d in signals:
+            t = _to_timestamp(d)
+            t_start = t - pd.Timedelta(days=h)
+            t_end = t + pd.Timedelta(days=h)
+            if t not in rates.index or t_end > max_date:
+                continue
+            r_t = rates.loc[t]
+            if pd.isna(r_t) or r_t == 0:
+                continue
+            past = rates.loc[t_start : t - pd.Timedelta(days=1)]
+            future = rates.loc[t + pd.Timedelta(days=1) : t_end]
+            surrounding = pd.concat([past, future]).dropna()
+            if surrounding.empty:
+                continue
+            diffs.append((float(surrounding.mean()) - r_t) / r_t * 10_000)
         result[h] = float(np.mean(diffs)) if diffs else float("nan")
     return result
 

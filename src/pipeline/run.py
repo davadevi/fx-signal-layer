@@ -12,21 +12,34 @@ HISTORY_PATH = Path("data/signal_history.json")
 HISTORY_RETENTION_DAYS = 30
 
 
-def _load_history() -> list[date]:
+def _load_history() -> dict[str, list[date]]:
     if not HISTORY_PATH.exists():
-        return []
+        return {}
     try:
         raw = json.loads(HISTORY_PATH.read_text())
         cutoff = date.today() - timedelta(days=HISTORY_RETENTION_DAYS)
-        return [date.fromisoformat(r["date"]) for r in raw if date.fromisoformat(r["date"]) >= cutoff]
+        result: dict[str, list[date]] = {}
+        for r in raw:
+            d = date.fromisoformat(r["date"])
+            if d < cutoff:
+                continue
+            corridor = r.get("corridor")
+            if not corridor:
+                continue
+            result.setdefault(corridor, []).append(d)
+        return result
     except Exception:
-        return []
+        return {}
 
 
-def _save_history(existing: list[date], new_signals: list) -> None:
+def _save_history(existing: dict[str, list[date]], new_signals: list) -> None:
     HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     cutoff = date.today() - timedelta(days=HISTORY_RETENTION_DAYS)
-    records = [{"date": d.isoformat()} for d in existing if d >= cutoff]
+    records: list[dict] = []
+    for corridor, dates in existing.items():
+        for d in dates:
+            if d >= cutoff:
+                records.append({"date": d.isoformat(), "corridor": corridor})
     for s in new_signals:
         records.append({"date": s.date.isoformat(), "corridor": s.corridor})
     HISTORY_PATH.write_text(json.dumps(records, indent=2, ensure_ascii=False))
